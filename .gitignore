@@ -3,7 +3,6 @@
 config/pialert.conf
 db/*
 front/log/*
-front/api/*
+front/plugins/**/*.log
 **/%40eaDir/
 **/@eaDir/
-front/translate_es.php

@@ -18,6 +18,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import sys
+from collections import namedtuple
 import subprocess
 import os
 import re
@@ -57,6 +58,7 @@ pialertPath = '/home/pi/pialert'
 logPath     = pialertPath + '/front/log'
 confPath = "/config/pialert.conf"
 dbPath = '/db/pialert.db'
+pluginsPath =  pialertPath + '/front/plugins'
 fullConfPath = pialertPath + confPath
 fullDbPath   = pialertPath + dbPath
 
@@ -267,7 +269,7 @@ def ccd(key, default, config, name, inputtype, options, group, events=[], desc =
 def importConfig (): 
 
     # Specify globals so they can be overwritten with the new config
-    global lastTimeImported, mySettings
+    global lastTimeImported, mySettings, plugins
     # General
     global ENABLE_ARPSCAN, SCAN_SUBNETS, PRINT_LOG, TIMEZONE, PIALERT_WEB_PROTECTION, PIALERT_WEB_PASSWORD, INCLUDED_SECTIONS, SCAN_CYCLE_MINUTES, DAYS_TO_KEEP_EVENTS, REPORT_DASHBOARD_URL, DIG_GET_IP_ARG, UI_LANG
     # Email
@@ -314,7 +316,7 @@ def importConfig ():
     TIMEZONE = ccd('TIMEZONE', 'Europe/Berlin' , c_d, 'Time zone', 'text', '', 'General')
     PIALERT_WEB_PROTECTION = ccd('PIALERT_WEB_PROTECTION', False , c_d, 'Enable logon', 'boolean', '', 'General')
     PIALERT_WEB_PASSWORD = ccd('PIALERT_WEB_PASSWORD', '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92' , c_d, 'Logon password', 'readonly', '', 'General')
-    INCLUDED_SECTIONS = ccd('INCLUDED_SECTIONS', ['internet', 'new_devices', 'down_devices', 'events', 'ports']   , c_d, 'Notify on', 'multiselect', "['internet', 'new_devices', 'down_devices', 'events', 'ports']", 'General')
+    INCLUDED_SECTIONS = ccd('INCLUDED_SECTIONS', ['internet', 'new_devices', 'down_devices', 'events', 'ports']   , c_d, 'Notify on', 'multiselect', "['internet', 'new_devices', 'down_devices', 'events', 'ports', 'plugins']", 'General')
     SCAN_CYCLE_MINUTES = ccd('SCAN_CYCLE_MINUTES', 5 , c_d, 'Scan cycle delay (m)', 'integer', '', 'General')
     DAYS_TO_KEEP_EVENTS = ccd('DAYS_TO_KEEP_EVENTS', 90 , c_d, 'Delete events days', 'integer', '', 'General')
     REPORT_DASHBOARD_URL = ccd('REPORT_DASHBOARD_URL', 'http://pi.alert/' , c_d, 'PiAlert URL', 'text', '', 'General')
@@ -398,19 +400,29 @@ def importConfig ():
     API_RUN_SCHD = ccd('API_RUN_SCHD', '*/3 * * * *' , c_d, 'API schedule', 'text', '', 'API')    
     API_RUN_INTERVAL = ccd('API_RUN_INTERVAL', 10 , c_d, 'API update interval', 'integer', '', 'API')   
     API_CUSTOM_SQL = ccd('API_CUSTOM_SQL', 'SELECT * FROM Devices WHERE dev_PresentLastScan = 0' , c_d, 'Custom endpoint', 'text', '', 'API')
-    
-    # Insert settings into the DB    
-    sql.execute ("DELETE FROM Settings")    
-    sql.executemany ("""INSERT INTO Settings ("Code_Name", "Display_Name", "Description", "Type", "Options",
-         "RegEx", "Value", "Group", "Events" ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", mySettings)
 
-    # Used to determine the next import
-    lastTimeImported = time.time()
+    #Plugins
+    plugins = get_plugins_configs()
 
-    # Used to display a message in the UI when old (outdated) settings are loaded    
-    initOrSetParam("Back_Settings_Imported",(round(time.time() * 1000),) )    
+    file_print('[', timeNow(), '] Plugins: Number of dynamically loaded plugins: ', len(plugins.dict) ) 
+
     
-    commitDB()
+    for plugin in plugins.list:
+        file_print('      ---------------------------------------------') 
+        file_print('      Name       : ', plugin["display_name"][0]["string"] ) 
+        file_print('      Description: ', plugin["description"][0]["string"] ) 
+        
+        pref = plugin["settings_short_prefix"]    
+        
+        collect_lang_strings(plugin, pref)
+
+        
+        for set in plugin["settings"]:     
+            codeName = pref + "_" + set["type"]       
+            ccd(codeName, set["default_value"] , c_d, set["name"][0]["string"], get_setting_type(set), str(set["options"]), pref)
+
+            collect_lang_strings(set,  pref + "_" + set["type"])
+
 
     # Update scheduler
     global tz, mySchedules
@@ -435,6 +447,19 @@ def importConfig ():
 
     # Format and prepare the list of subnets
     updateSubnets()
+
+    # Insert settings into the DB    
+    sql.execute ("DELETE FROM Settings")    
+    sql.executemany ("""INSERT INTO Settings ("Code_Name", "Display_Name", "Description", "Type", "Options",
+         "RegEx", "Value", "Group", "Events" ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", mySettings)
+
+    # Used to determine the next import
+    lastTimeImported = time.time()
+
+    # Is used to display a message in the UI when old (outdated) settings are loaded    
+    initOrSetParam("Back_Settings_Imported",(round(time.time() * 1000),) )    
+    
+    commitDB()
 
     file_print('[', timeNow(), '] Config: Imported new config')  
 
@@ -1873,7 +1898,7 @@ def cleanResult(str):
     str = str.replace(".lan", "")
     str = str.replace(".home", "")
     str = re.sub(r'-[a-fA-F0-9]{32}', '', str)    # removing last part of e.g. Nest-Audio-ff77ff77ff77ff77ff77ff77ff77ff77
-    str = str.replace(".", "")
+    # str = str.replace(".", "")
 
     return str
 
@@ -3042,6 +3067,49 @@ def upgradeDB ():
         PRIMARY KEY("Index" AUTOINCREMENT)
         );      
         """)
+
+    # Plugin state
+    sql_Plugins_State = """ CREATE TABLE IF NOT EXISTS Plugins_State(
+                        "Index"	          INTEGER,
+                        Plugin TEXT NOT NULL,
+                        Object_PrimaryID TEXT NOT NULL,
+                        Object_SecondaryID TEXT NOT NULL,
+                        DateTime TEXT NOT NULL,                        
+                        Watched_Value1 TEXT NOT NULL,
+                        Watched_Value2 TEXT NOT NULL,
+                        Watched_Value3 TEXT NOT NULL,
+                        Watched_Value4 TEXT NOT NULL,
+                        Extra TEXT NOT NULL,
+                        PRIMARY KEY("Index" AUTOINCREMENT)
+                    ); """
+    sql.execute(sql_Plugins_State)
+
+    # Plugin execution results
+    sql_Plugin_Events = """ CREATE TABLE IF NOT EXISTS Plugins_Events(
+                        "Index"	          INTEGER,
+                        Plugin TEXT NOT NULL,
+                        Object_PrimaryID TEXT NOT NULL,
+                        Object_SecondaryID TEXT NOT NULL,
+                        DateTime TEXT NOT NULL,                        
+                        Watched_Value1 TEXT NOT NULL,
+                        Watched_Value2 TEXT NOT NULL,
+                        Watched_Value3 TEXT NOT NULL,
+                        Watched_Value4 TEXT NOT NULL,
+                        Processed TEXT NOT NULL,                        
+                        PRIMARY KEY("Index" AUTOINCREMENT)
+                    ); """
+    sql.execute(sql_Plugin_Events)
+
+    # Dynamically generated language strings
+    sql.execute("DROP TABLE Language_Strings;") 
+    sql.execute(""" CREATE TABLE IF NOT EXISTS Language_Strings(
+                        "Index"	          INTEGER,
+                        Language_Code TEXT NOT NULL,
+                        String_Key TEXT NOT NULL,
+                        String_Value TEXT NOT NULL,
+                        Extra TEXT NOT NULL,                                                    
+                        PRIMARY KEY("Index" AUTOINCREMENT)
+                    ); """)   
     
     commitDB ()
 
@@ -3426,6 +3494,62 @@ def isNewVersion():
 
     return newVersionAvailable
 
+
+#-------------------------------------------------------------------------------
+# Plugins
+#-------------------------------------------------------------------------------
+def get_plugins_configs():
+
+    pluginsDict = []
+    pluginsList = []
+
+    for root, dirs, files in os.walk(pluginsPath):
+        for d in dirs:            # Loop over directories, not files
+            pluginsDict.append(json.loads(get_file_content(pluginsPath + "/" + d + '/config.json'), object_hook=custom_plugin_decoder))   
+            pluginsList.append(json.loads(get_file_content(pluginsPath + "/" + d + '/config.json')))          
+
+    return plugins_struct(pluginsDict, pluginsList)
+
+#-------------------------------------------------------------------------------
+class plugins_struct:
+    def __init__(self, dict, list):
+        self.dict = dict
+        self.list = list
+
+#-------------------------------------------------------------------------------
+def collect_lang_strings(json, pref):
+
+    for prop in json["localized"]:                   
+        for language_string in json[prop]:
+            import_language_string(language_string["language_code"], pref + "_" + prop, language_string["string"])   
+        
+
+#-------------------------------------------------------------------------------
+def import_language_string(code, key, value, extra = ""):
+
+    sql.execute ("""INSERT INTO Language_Strings ("Language_Code", "String_Key", "String_Value", "Extra") VALUES (?, ?, ?, ?)""", (str(code), str(key), str(value), str(extra))) 
+
+    commitDB ()
+
+#-------------------------------------------------------------------------------
+def get_setting_type(setting):
+
+    type = setting["type"]
+
+    if type in ['RUN']:
+        return 'selecttext'
+    if type in ['ENABLE', 'FORCE_REPORT']:
+        return 'boolean'
+    if type in ['TIMEOUT', 'RUN_TIMEOUT']:
+        return 'integer'
+    if type in ['NOTIFY_ON']:
+        return 'multiselect'
+
+    return 'text'
+
+#-------------------------------------------------------------------------------
+def custom_plugin_decoder(pluginDict):
+    return namedtuple('X', pluginDict.keys())(*pluginDict.values())
 
 #-------------------------------------------------------------------------------
 # Cron-like Scheduling
