@@ -50,15 +50,30 @@ sql_devices_stats =  "SELECT Online_Devices as online, Down_Devices as down, All
 sql_nmap_scan_all = "SELECT  * FROM Nmap_Scan"
 sql_pholus_scan_all = "SELECT  * FROM Pholus_Scan"
 sql_events_pending_alert = "SELECT  * FROM Events where eve_PendingAlertEmail is not 0"
+sql_settings = "SELECT  * FROM Settings"
+sql_plugins_objects = "SELECT  * FROM Plugins_Objects"
+sql_language_strings = "SELECT  * FROM Language_Strings"
+sql_plugins_events = "SELECT  * FROM Plugins_Events"
+sql_new_devices = """SELECT * FROM ( SELECT eve_IP as dev_LastIP, eve_MAC as dev_MAC FROM Events_Devices
+                                                                WHERE eve_PendingAlertEmail = 1
+                                                                AND eve_EventType = 'New Device'
+                                    ORDER BY eve_DateTime ) t1
+                                    LEFT JOIN 
+                                    (
+                                        SELECT dev_Name, dev_MAC as dev_MAC_t2 FROM Devices 
+                                    ) t2 
+                                    ON t1.dev_MAC = t2.dev_MAC_t2"""
 
 #===============================================================================
 # PATHS
 #===============================================================================
 pialertPath = '/home/pi/pialert'
-logPath     = pialertPath + '/front/log'
+
 confPath = "/config/pialert.conf"
 dbPath = '/db/pialert.db'
-pluginsPath =  pialertPath + '/front/plugins'
+
+pluginsPath  = pialertPath + '/front/plugins'
+logPath      = pialertPath + '/front/log'
 fullConfPath = pialertPath + confPath
 fullDbPath   = pialertPath + dbPath
 
@@ -81,8 +96,30 @@ sql_connection = None
 #-------------------------------------------------------------------------------
 def timeNow():
     return datetime.datetime.now().replace(microsecond=0)
+
 #-------------------------------------------------------------------------------
-def file_print(*args):
+debugLevels =   [
+                    ('none', 0), ('minimal', 1), ('verbose', 2), ('debug', 3)
+                ]
+LOG_LEVEL = 'debug'
+
+def mylog(requestedDebugLevel, n):
+
+    setLvl = 0  
+    reqLvl = 0  
+
+    #  Get debug urgency/relative weight
+    for lvl in debugLevels:
+        if LOG_LEVEL == lvl[0]:
+            setLvl = lvl[1]
+        if requestedDebugLevel == lvl[0]:
+            reqLvl = lvl[1]
+
+    if reqLvl <= setLvl:
+        file_print (*n)
+
+#-------------------------------------------------------------------------------
+def file_print (*args):
 
     result = ''
     
@@ -108,22 +145,20 @@ def logResult (stdout, stderr):
         append_file_binary (logPath + '/stdout.log', stdout)  
 
 #-------------------------------------------------------------------------------
-PRINT_LOG = False
-
 def print_log (pText):
     global log_timestamp
 
     # Check LOG actived
-    if not PRINT_LOG :
+    if not LOG_LEVEL == 'debug' :
         return
 
     # Current Time    
-    log_timestamp2 = datetime.datetime.now()
+    log_timestamp2 = datetime.datetime.now().replace(microsecond=0)
 
     # Print line + time + elapsed time + text
-    file_print('[PRINT_LOG] ',
-        log_timestamp2, ' ',
-        log_timestamp2 - log_timestamp, ' ',
+    file_print ('[LOG_LEVEL=debug] ',
+        # log_timestamp2, ' ',
+        log_timestamp2.replace(microsecond=0) - log_timestamp.replace(microsecond=0), ' ',
         pText)
 
     # Save current time to calculate elapsed time until next log
@@ -142,16 +177,16 @@ def checkPermissionsOK():
     dbW_access = (os.access(fullDbPath, os.W_OK))
 
 
-    file_print('\n Permissions check (All should be True)')
-    file_print('------------------------------------------------')
-    file_print( "  " , confPath ,     " | " , " READ  | " , confR_access)
-    file_print( "  " , confPath ,     " | " , " WRITE | " , confW_access)
-    file_print( "  " , dbPath , "       | " , " READ  | " , dbR_access)
-    file_print( "  " , dbPath , "       | " , " WRITE | " , dbW_access)
-    file_print('------------------------------------------------')
+    mylog('none', ['\n Permissions check (All should be True)'])
+    mylog('none', ['------------------------------------------------'])
+    mylog('none', [ "  " , confPath ,     " | " , " READ  | " , confR_access])
+    mylog('none', [ "  " , confPath ,     " | " , " WRITE | " , confW_access])
+    mylog('none', [ "  " , dbPath , "       | " , " READ  | " , dbR_access])
+    mylog('none', [ "  " , dbPath , "       | " , " WRITE | " , dbW_access])
+    mylog('none', ['------------------------------------------------'])
 
     return dbR_access and dbW_access and confR_access and confW_access 
-
+#-------------------------------------------------------------------------------
 def fixPermissions():
     # Try fixing access rights if needed
     chmodCommands = []
@@ -161,39 +196,40 @@ def fixPermissions():
 
     for com in chmodCommands:
         # Execute command
-        file_print("[Setup] Attempting to fix permissions.")
+        mylog('none', ["[Setup] Attempting to fix permissions."])
         try:
             # try runnning a subprocess
             result = subprocess.check_output (com, universal_newlines=True)
         except subprocess.CalledProcessError as e:
             # An error occured, handle it
-            file_print("[Setup] Fix Failed. Execute this command manually inside of the container: ", ' '.join(com)) 
-            file_print(e.output)
+            mylog('none', ["[Setup] Fix Failed. Execute this command manually inside of the container: ", ' '.join(com)]) 
+            mylog('none', [e.output])
 
 
 checkPermissionsOK() # Initial check
 
+#-------------------------------------------------------------------------------
 def initialiseFile(pathToCheck, defaultFile):
     # if file not readable (missing?) try to copy over the backed-up (default) one
     if str(os.access(pathToCheck, os.R_OK)) == "False":
-        file_print("[Setup] ("+ pathToCheck +") file is not readable or missing. Trying to copy over the default one.")
+        mylog('none', ["[Setup] ("+ pathToCheck +") file is not readable or missing. Trying to copy over the default one."])
         try:
             # try runnning a subprocess
             p = subprocess.Popen(["cp", defaultFile , pathToCheck], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             stdout, stderr = p.communicate()
 
             if str(os.access(pathToCheck, os.R_OK)) == "False":
-                file_print("[Setup] Error copying ("+defaultFile+") to ("+pathToCheck+"). Make sure the app has Read & Write access to the parent directory.")
+                mylog('none', ["[Setup] Error copying ("+defaultFile+") to ("+pathToCheck+"). Make sure the app has Read & Write access to the parent directory."])
             else:
-                file_print("[Setup] ("+defaultFile+") copied over successfully to ("+pathToCheck+").")
+                mylog('none', ["[Setup] ("+defaultFile+") copied over successfully to ("+pathToCheck+")."])
 
             # write stdout and stderr into .log files for debugging if needed
             logResult (stdout, stderr)
             
         except subprocess.CalledProcessError as e:
             # An error occured, handle it
-            file_print("[Setup] Error copying ("+defaultFile+"). Make sure the app has Read & Write access to " + pathToCheck)
-            file_print(e.output)
+            mylog('none', ["[Setup] Error copying ("+defaultFile+"). Make sure the app has Read & Write access to " + pathToCheck])
+            mylog('none', [e.output])
 
 #===============================================================================
 # Basic checks and Setup
@@ -244,7 +280,7 @@ def commitDB ():
         return
 
     # Log    
-    print_log ('Commiting DB changes')
+    # print_log ('Commiting DB changes')
 
     # Commit changes to DB
     sql_connection.commit()
@@ -255,23 +291,28 @@ def commitDB ():
 def ccd(key, default, config, name, inputtype, options, group, events=[], desc = "", regex = ""):
     result = default
 
+    # use existing value if already supplied, otehrwise default value is used
     if key in config:
-         result =  config[key]
+        result =  config[key]
 
     global mySettings
 
-    mySettings.append((key, name, desc, inputtype, options, regex, str(result), group, str(events)))
+    if inputtype == 'text':
+        result = result.replace('\'', "{s-quote}")
+
+    mySettingsSQLsafe.append((key, name, desc, inputtype, options, regex, str(result), group, str(events)))
+    mySettings.append((key, name, desc, inputtype, options, regex, result, group, str(events)))
 
     return result
 
 #-------------------------------------------------------------------------------
 
-def importConfig (): 
+def importConfigs (): 
 
     # Specify globals so they can be overwritten with the new config
-    global lastTimeImported, mySettings, plugins
+    global lastTimeImported, mySettings, mySettingsSQLsafe, plugins, plugins_once_run
     # General
-    global ENABLE_ARPSCAN, SCAN_SUBNETS, PRINT_LOG, TIMEZONE, PIALERT_WEB_PROTECTION, PIALERT_WEB_PASSWORD, INCLUDED_SECTIONS, SCAN_CYCLE_MINUTES, DAYS_TO_KEEP_EVENTS, REPORT_DASHBOARD_URL, DIG_GET_IP_ARG, UI_LANG
+    global ENABLE_ARPSCAN, SCAN_SUBNETS, LOG_LEVEL, TIMEZONE, PIALERT_WEB_PROTECTION, PIALERT_WEB_PASSWORD, INCLUDED_SECTIONS, SCAN_CYCLE_MINUTES, DAYS_TO_KEEP_EVENTS, REPORT_DASHBOARD_URL, DIG_GET_IP_ARG, UI_LANG
     # Email
     global REPORT_MAIL, SMTP_SERVER, SMTP_PORT, REPORT_TO, REPORT_FROM, SMTP_SKIP_LOGIN, SMTP_USER, SMTP_PASS, SMTP_SKIP_TLS, SMTP_FORCE_SSL
     # Webhooks
@@ -293,15 +334,17 @@ def importConfig ():
     # Nmap
     global NMAP_ACTIVE, NMAP_TIMEOUT, NMAP_RUN, NMAP_RUN_SCHD, NMAP_ARGS 
     # API
-    global ENABLE_API, API_RUN, API_RUN_SCHD, API_RUN_INTERVAL, API_CUSTOM_SQL
-    
-    mySettings = [] # reset settings
+    global API_CUSTOM_SQL
+
     # get config file
     config_file = Path(fullConfPath)
 
     # Skip import if last time of import is NEWER than file age 
     if (os.path.getmtime(config_file) < lastTimeImported) :
         return
+        
+    mySettings = [] # reset settings
+    mySettingsSQLsafe = [] # same as aboverr but safe to be passed into a SQL query
     
     # load the variables from  pialert.conf
     code = compile(config_file.read_text(), config_file.name, "exec")
@@ -311,8 +354,8 @@ def importConfig ():
     # Import setting if found in the dictionary
     # General
     ENABLE_ARPSCAN = ccd('ENABLE_ARPSCAN', True , c_d, 'Enable arpscan', 'boolean', '', 'General', ['run']) 
-    SCAN_SUBNETS = ccd('SCAN_SUBNETS', ['192.168.1.0/24 --interface=eth1', '192.168.1.0/24 --interface=eth0'] , c_d, 'Subnets to scan', 'subnets', '', 'General')
-    PRINT_LOG = ccd('PRINT_LOG', False , c_d, 'Print additional logging', 'boolean', '', 'General')
+    SCAN_SUBNETS = ccd('SCAN_SUBNETS', ['192.168.1.0/24 --interface=eth1', '192.168.1.0/24 --interface=eth0'] , c_d, 'Subnets to scan', 'subnets', '', 'General')    
+    LOG_LEVEL = ccd('LOG_LEVEL', 'verbose' , c_d, 'Log verboseness', 'selecttext', "['none', 'minimal', 'verbose', 'debug']", 'General')
     TIMEZONE = ccd('TIMEZONE', 'Europe/Berlin' , c_d, 'Time zone', 'text', '', 'General')
     PIALERT_WEB_PROTECTION = ccd('PIALERT_WEB_PROTECTION', False , c_d, 'Enable logon', 'boolean', '', 'General')
     PIALERT_WEB_PASSWORD = ccd('PIALERT_WEB_PASSWORD', '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92' , c_d, 'Logon password', 'readonly', '', 'General')
@@ -394,64 +437,72 @@ def importConfig ():
     NMAP_RUN_SCHD = ccd('NMAP_RUN_SCHD', '0 2 * * *' , c_d, 'Nmap schedule', 'text', '', 'Nmap')
     NMAP_ARGS = ccd('NMAP_ARGS', '-p -10000' , c_d, 'Nmap custom arguments', 'text', '', 'Nmap')
 
-    # API 
-    ENABLE_API = ccd('ENABLE_API', True , c_d, 'Enable API', 'boolean', '', 'API')    
-    API_RUN = ccd('API_RUN', 'schedule' , c_d, 'API execution', 'selecttext', "['none', 'interval', 'schedule']", 'API')
-    API_RUN_SCHD = ccd('API_RUN_SCHD', '*/3 * * * *' , c_d, 'API schedule', 'text', '', 'API')    
-    API_RUN_INTERVAL = ccd('API_RUN_INTERVAL', 10 , c_d, 'API update interval', 'integer', '', 'API')   
+    # API     
     API_CUSTOM_SQL = ccd('API_CUSTOM_SQL', 'SELECT * FROM Devices WHERE dev_PresentLastScan = 0' , c_d, 'Custom endpoint', 'text', '', 'API')
 
-    #Plugins
-    plugins = get_plugins_configs()
-
-    file_print('[', timeNow(), '] Plugins: Number of dynamically loaded plugins: ', len(plugins.dict) ) 
-
-    
-    for plugin in plugins.list:
-        file_print('      ---------------------------------------------') 
-        file_print('      Name       : ', plugin["display_name"][0]["string"] ) 
-        file_print('      Description: ', plugin["description"][0]["string"] ) 
-        
-        pref = plugin["settings_short_prefix"]    
-        
-        collect_lang_strings(plugin, pref)
-
-        
-        for set in plugin["settings"]:     
-            codeName = pref + "_" + set["type"]       
-            ccd(codeName, set["default_value"] , c_d, set["name"][0]["string"], get_setting_type(set), str(set["options"]), pref)
-
-            collect_lang_strings(set,  pref + "_" + set["type"])
-
-
-    # Update scheduler
-    global tz, mySchedules
+    # Prepare scheduler
+    global tz, mySchedules, plugins
 
     #  Init timezone in case it changed
     tz = timezone(TIMEZONE) 
 
     # reset schedules
-    mySchedules = []
-           
+    mySchedules = [] 
+
     # init pholus schedule
     pholusSchedule = Cron(PHOLUS_RUN_SCHD).schedule(start_date=datetime.datetime.now(tz))    
-    mySchedules.append(serviceSchedule("pholus", pholusSchedule, pholusSchedule.next(), False))
+    mySchedules.append(schedule_class("pholus", pholusSchedule, pholusSchedule.next(), False))
 
     # init nmap schedule
     nmapSchedule = Cron(NMAP_RUN_SCHD).schedule(start_date=datetime.datetime.now(tz))
-    mySchedules.append(serviceSchedule("nmap", nmapSchedule, nmapSchedule.next(), False))
-
-    # init API schedule
-    apiSchedule = Cron(API_RUN_SCHD).schedule(start_date=datetime.datetime.now(tz))
-    mySchedules.append(serviceSchedule("api", apiSchedule, apiSchedule.next(), False))
+    mySchedules.append(schedule_class("nmap", nmapSchedule, nmapSchedule.next(), False))
 
     # Format and prepare the list of subnets
     updateSubnets()
 
+    # Plugins START
+    # -----------------
+    plugins = get_plugins_configs()
+
+    mylog('none', ['[', timeNow(), '] Plugins: Number of dynamically loaded plugins: ', len(plugins.dict)])
+
+    #  handle plugins
+    for plugin in plugins.list:
+        print_plugin_info(plugin, ['display_name','description'])
+        
+        pref = plugin["unique_prefix"]    
+        
+        # collect plugin level language strings
+        collect_lang_strings(plugin, pref)
+        
+        for set in plugin["settings"]:
+            setFunction = set["function"]
+            # Setting code name / key  
+            key = pref + "_" + setFunction 
+
+            v = ccd(key, set["default_value"], c_d, set["name"][0]["string"], set["type"] , str(set["options"]), pref)
+
+            # Save the user defined value into the object
+            set["value"] = v
+
+            # Setup schedules
+            if setFunction == 'RUN_SCHD':
+                newSchedule = Cron(v).schedule(start_date=datetime.datetime.now(tz))
+                mySchedules.append(schedule_class(pref, newSchedule, newSchedule.next(), False))
+
+            # Collect settings related language strings
+            collect_lang_strings(set,  pref + "_" + set["function"])
+    # -----------------
+    # Plugins END
+
+    
+           
+    plugins_once_run = False
+
     # Insert settings into the DB    
     sql.execute ("DELETE FROM Settings")    
     sql.executemany ("""INSERT INTO Settings ("Code_Name", "Display_Name", "Description", "Type", "Options",
-         "RegEx", "Value", "Group", "Events" ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", mySettings)
+         "RegEx", "Value", "Group", "Events" ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", mySettingsSQLsafe)
 
     # Used to determine the next import
     lastTimeImported = time.time()
@@ -461,13 +512,17 @@ def importConfig ():
     
     commitDB()
 
-    file_print('[', timeNow(), '] Config: Imported new config')  
+    #  update only the settings datasource
+    update_api(False, ["settings"])
+
+    mylog('info', ['[', timeNow(), '] Config: Imported new config'])  
 
 #===============================================================================
 # MAIN
 #===============================================================================
 cycle = ""
 check_report = [1, "internet_IP", "update_vendors_silent"]
+plugins_once_run = False
 
 # timestamps of last execution times
 startTime = time_started
@@ -475,7 +530,6 @@ now_minus_24h = time_started - datetime.timedelta(hours = 24)
 
 last_network_scan = now_minus_24h
 last_internet_IP_scan = now_minus_24h
-last_API_update = now_minus_24h
 last_run = now_minus_24h
 last_cleanup = now_minus_24h
 last_update_vendors = time_started - datetime.timedelta(days = 6) # update vendors 24h after first run and then once a week
@@ -485,9 +539,9 @@ newVersionAvailable = False
 
 def main ():
     # Initialize global variables
-    global time_started, cycle, last_network_scan, last_internet_IP_scan, last_run, last_cleanup, last_update_vendors, last_API_update
+    global time_started, cycle, last_network_scan, last_internet_IP_scan, last_run, last_cleanup, last_update_vendors
     # second set of global variables
-    global startTime, log_timestamp, sql_connection, sql
+    global startTime, log_timestamp, sql_connection, sql, plugins_once_run
 
     # DB
     sql_connection = None
@@ -499,24 +553,28 @@ def main ():
 
     # Upgrade DB if needed
     upgradeDB()
-    
+
     while True:
 
         # update time started
         time_started = datetime.datetime.now()
 
-        # re-load user configuration
-        importConfig()         
+        # re-load user configuration and plugins
+        importConfigs()       
+
+        
+
+        # Handle plugins executed ONCE
+        if plugins_once_run == False:
+            run_plugin_scripts('once')  
+            plugins_once_run = True
 
         # check if there is a front end initiated event which needs to be executed
         check_and_run_event()
 
-        # Execute API update if enabled via the interval schedule settings and if enough time passed
-        if API_RUN == "interval" and last_API_update + datetime.timedelta(seconds = API_RUN_INTERVAL) < time_started:
-
-            last_API_update = time_started                
-            update_api()
-
+        # Update API endpoints              
+        update_api()
+        
         # proceed if 1 minute passed
         if last_run + datetime.timedelta(minutes=1) < time_started :
 
@@ -525,13 +583,17 @@ def main ():
 
             # Header
             updateState("Process: Start")
-            file_print('[', timeNow(), '] Process: Start')                
+            mylog('verbose', ['[', timeNow(), '] Process: Start'])                
 
             # Timestamp
             startTime = time_started
-            startTime = startTime.replace (microsecond=0)      
+            startTime = startTime.replace (microsecond=0) 
+
+            # Check if any plugins need to run on schedule
+            run_plugin_scripts('schedule') 
 
             # determine run/scan type based on passed time
+            # --------------------------------------------
 
             # check for changes in Internet IP
             if last_internet_IP_scan + datetime.timedelta(minutes=3) < time_started:
@@ -580,20 +642,7 @@ def main ():
                 if run:
                     nmapSchedule.last_run = datetime.datetime.now(tz).replace(microsecond=0)
                     performNmapScan(get_all_devices())
-
-            # Execute scheduled API update if enabled
-            if API_RUN == "schedule":
-
-                apiSchedule = [sch for sch in mySchedules if sch.service == "api"][0]
-                run = False
-
-                # run if overdue scheduled time
-                run = apiSchedule.runScheduleCheck()
-
-                if run:
-                    apiSchedule.last_run = datetime.datetime.now(tz).replace(microsecond=0)
-                    update_api()
-
+            
             # Perform a network scan via arp-scan or pihole
             if last_network_scan + datetime.timedelta(minutes=SCAN_CYCLE_MINUTES) < time_started:
                 last_network_scan = time_started
@@ -602,23 +651,19 @@ def main ():
             
             # Reporting   
             if cycle in check_report:
-                # Check if new devices need to be scanned with Nmap
-                if NMAP_ACTIVE:
-                    sql.execute ("""SELECT * FROM 
-                                    ( SELECT eve_IP as dev_LastIP, eve_MAC as dev_MAC FROM Events_Devices
-                                                                WHERE eve_PendingAlertEmail = 1
-                                                                AND eve_EventType = 'New Device'
-                                    ORDER BY eve_DateTime ) t1
-                                    LEFT JOIN 
-                                    (
-                                        SELECT dev_Name, dev_MAC as dev_MAC_t2 FROM Devices 
-                                    ) t2 
-                                    ON t1.dev_MAC = t2.dev_MAC_t2""")
+                # Check if new devices found
+                sql.execute (sql_new_devices)
+                newDevices = sql.fetchall()
+                commitDB()
+                
+                #  new devices were found
+                if len(newDevices) > 0:
+                    #  run all plugins registered to be run when new devices are found
+                    run_plugin_scripts('on_new_device')
 
-                    newDevices = sql.fetchall()
-                    commitDB()
-                    
-                    performNmapScan(newDevices)
+                    #  Scan newly found devices with Nmap if enabled
+                    if NMAP_ACTIVE and len(newDevices) > 0:
+                        performNmapScan(newDevices)
 
                 # send all configured notifications
                 send_notifications()
@@ -631,18 +676,18 @@ def main ():
 
             # Commit SQL
             commitDB()            
-
+            
             # Final message
             if cycle != "":
                 action = str(cycle)
                 if action == "1":
                     action = "network_scan"
-                file_print('[', timeNow(), '] Last action: ', action)
+                mylog('verbose', ['[', timeNow(), '] Last action: ', action])
                 cycle = ""
-
+            
             # Footer
             updateState("Process: Wait")
-            file_print('[', timeNow(), '] Process: Wait')            
+            mylog('verbose', ['[', timeNow(), '] Process: Wait'])            
         else:
             # do something
             cycle = ""           
@@ -658,54 +703,54 @@ def check_internet_IP ():
 
     # Header
     updateState("Scan: Internet IP")
-    file_print('[', startTime, '] Check Internet IP:')    
+    mylog('verbose', ['[', startTime, '] Check Internet IP:'])    
 
     # Get Internet IP
-    file_print('    Retrieving Internet IP:')
+    mylog('verbose', ['    Retrieving Internet IP:'])
     internet_IP = get_internet_IP()
     # TESTING - Force IP
         # internet_IP = "1.2.3.4"
 
     # Check result = IP
     if internet_IP == "" :
-        file_print('    Error retrieving Internet IP')
-        file_print('    Exiting...')
+        mylog('none', ['    Error retrieving Internet IP'])
+        mylog('none', ['    Exiting...'])
         return False
-    file_print('      ', internet_IP)
+    mylog('verbose', ['      ', internet_IP])
 
     # Get previous stored IP
-    file_print('    Retrieving previous IP:')    
+    mylog('verbose', ['    Retrieving previous IP:'])    
     previous_IP = get_previous_internet_IP ()
-    file_print('      ', previous_IP)
+    mylog('verbose', ['      ', previous_IP])
 
     # Check IP Change
     if internet_IP != previous_IP :
-        file_print('    Saving new IP')
+        mylog('info', ['    New internet IP: ', internet_IP])
         save_new_internet_IP (internet_IP)
-        file_print('        IP updated')        
+        
     else :
-        file_print('    No changes to perform')    
+        mylog('verbose', ['    No changes to perform'])    
 
     # Get Dynamic DNS IP
     if DDNS_ACTIVE :
-        file_print('    Retrieving Dynamic DNS IP')
+        mylog('verbose', ['    Retrieving Dynamic DNS IP'])
         dns_IP = get_dynamic_DNS_IP()
 
         # Check Dynamic DNS IP
         if dns_IP == "" :
-            file_print('    Error retrieving Dynamic DNS IP')
-            file_print('    Exiting...')
-        file_print('   ', dns_IP)
+            mylog('info', ['    Error retrieving Dynamic DNS IP'])
+            mylog('info', ['    Exiting...'])
+        mylog('info', ['   ', dns_IP])
 
         # Check DNS Change
         if dns_IP != internet_IP :
-            file_print('    Updating Dynamic DNS IP')
+            mylog('info', ['    Updating Dynamic DNS IP'])
             message = set_dynamic_DNS_IP ()
-            file_print('       ', message)            
+            mylog('info', ['       ', message])            
         else :
-            file_print('    No changes to perform')
+            mylog('verbose', ['    No changes to perform'])
     else :
-        file_print('    Skipping Dynamic DNS update')
+        mylog('verbose', ['    Skipping Dynamic DNS update'])
 
 
 
@@ -717,7 +762,7 @@ def get_internet_IP ():
     try:
         cmd_output = subprocess.check_output (dig_args, universal_newlines=True)
     except subprocess.CalledProcessError as e:
-        file_print(e.output)
+        mylog('none', [e.output])
         cmd_output = '' # no internet
 
     # Check result is an IP
@@ -737,7 +782,7 @@ def get_dynamic_DNS_IP ():
         dig_output = subprocess.check_output (dig_args, universal_newlines=True)
     except subprocess.CalledProcessError as e:
         # An error occured, handle it
-        file_print(e.output)
+        mylog('none', [e.output])
         dig_output = '' # probably no internet
 
     # Check result is an IP
@@ -757,7 +802,7 @@ def set_dynamic_DNS_IP ():
             universal_newlines=True)
     except subprocess.CalledProcessError as e:
         # An error occured, handle it
-        file_print(e.output)
+        mylog('none', [e.output])
         curl_output = ""    
     
     return curl_output
@@ -823,24 +868,24 @@ def check_IP_format (pIP):
 def cleanup_database ():
     # Header    
     updateState("Upkeep: Clean DB") 
-    file_print('[', startTime, '] Upkeep Database:' )
+    mylog('verbose', ['[', startTime, '] Upkeep Database:' ])
 
     # Cleanup Online History
-    file_print('    Online_History: Delete all older than 1 day')
-    sql.execute ("DELETE FROM Online_History WHERE Scan_Date <= date('now', '-1 day')")
-    file_print('    Optimize Database')
+    mylog('verbose', ['    Online_History: Delete all older than 3 days'])
+    sql.execute ("DELETE FROM Online_History WHERE Scan_Date <= date('now', '-3 day')")
+    mylog('verbose', ['    Optimize Database'])
 
     # Cleanup Events
-    file_print('    Events: Delete all older than '+str(DAYS_TO_KEEP_EVENTS)+' days')
+    mylog('verbose', ['    Events: Delete all older than '+str(DAYS_TO_KEEP_EVENTS)+' days'])
     sql.execute ("DELETE FROM Events WHERE eve_DateTime <= date('now', '-"+str(DAYS_TO_KEEP_EVENTS)+" day')")
 
     # Cleanup Pholus_Scan
     if PHOLUS_DAYS_DATA != 0:
-        file_print('    Pholus_Scan: Delete all older than ' + str(PHOLUS_DAYS_DATA) + ' days')
+        mylog('verbose', ['    Pholus_Scan: Delete all older than ' + str(PHOLUS_DAYS_DATA) + ' days'])
         sql.execute ("DELETE FROM Pholus_Scan WHERE Time <= date('now', '-"+ str(PHOLUS_DAYS_DATA) +" day')") # improvement possibility: keep at least N per mac
     
     # De-Dupe (de-duplicate - remove duplicate entries) from the Pholus_Scan table    
-    file_print('    Pholus_Scan: Delete all duplicates')
+    mylog('verbose', ['    Pholus_Scan: Delete all duplicates'])
     sql.execute ("""DELETE  FROM Pholus_Scan
                     WHERE rowid > (
                     SELECT MIN(rowid) FROM Pholus_Scan p2  
@@ -850,7 +895,7 @@ def cleanup_database ():
                     );""") 
 
     # De-Dupe (de-duplicate - remove duplicate entries) from the Nmap_Scan table    
-    file_print('    Nmap_Scan: Delete all duplicates')
+    mylog('verbose', ['    Nmap_Scan: Delete all duplicates'])
     sql.execute ("""DELETE  FROM Nmap_Scan
                     WHERE rowid > (
                     SELECT MIN(rowid) FROM Nmap_Scan p2  
@@ -861,7 +906,7 @@ def cleanup_database ():
                     );""") 
     
     # Shrink DB
-    file_print('    Shrink Database')
+    mylog('verbose', ['    Shrink Database'])
     sql.execute ("VACUUM;")
 
     commitDB()
@@ -872,10 +917,10 @@ def cleanup_database ():
 def update_devices_MAC_vendors (pArg = ''):
     # Header    
     updateState("Upkeep: Vendors")
-    file_print('[', startTime, '] Upkeep - Update HW Vendors:' )
+    mylog('verbose', ['[', startTime, '] Upkeep - Update HW Vendors:' ])
 
     # Update vendors DB (iab oui)
-    file_print('    Updating vendors DB (iab & oui)')    
+    mylog('verbose', ['    Updating vendors DB (iab & oui)'])    
     update_args = ['sh', pialertPath + '/update_vendors.sh', pArg]
 
     try:
@@ -883,7 +928,8 @@ def update_devices_MAC_vendors (pArg = ''):
         update_output = subprocess.check_output (update_args)
     except subprocess.CalledProcessError as e:
         # An error occured, handle it
-        file_print(e.output)        
+        mylog('none', ['    FAILED: Updating vendors DB, set LOG_LEVEL=debug for more info'])  
+        mylog('none', [e.output])        
 
     # Initialize variables
     recordsToUpdate = []
@@ -891,7 +937,7 @@ def update_devices_MAC_vendors (pArg = ''):
     notFound = 0
 
     # All devices loop
-    file_print('    Searching devices vendor')    
+    mylog('verbose', ['    Searching devices vendor'])    
     for device in sql.execute ("SELECT * FROM Devices") :
         # Search vendor in HW Vendors DB
         vendor = query_MAC_vendor (device['dev_MAC'])
@@ -903,18 +949,14 @@ def update_devices_MAC_vendors (pArg = ''):
             recordsToUpdate.append ([vendor, device['dev_MAC']])
             
     # Print log    
-    file_print("    Devices Ignored:  ", ignored)
-    file_print("    Vendors Not Found:", notFound)
-    file_print("    Vendors updated:  ", len(recordsToUpdate) )
-    # DEBUG - print list of record to update
-        # file_print(recordsToUpdate)
+    mylog('verbose', ["    Devices Ignored:  ", ignored])
+    mylog('verbose', ["    Vendors Not Found:", notFound])
+    mylog('verbose', ["    Vendors updated:  ", len(recordsToUpdate) ])
+
 
     # update devices
     sql.executemany ("UPDATE Devices SET dev_Vendor = ? WHERE dev_MAC = ? ",
         recordsToUpdate )
-
-    # DEBUG - print number of rows updated
-        # file_print(sql.rowcount)
 
     # Commit DB
     commitDB()
@@ -944,7 +986,7 @@ def query_MAC_vendor (pMAC):
             grep_output = subprocess.check_output (grep_args)
         except subprocess.CalledProcessError as e:
             # An error occured, handle it
-            file_print(e.output)
+            mylog('none', [e.output])
             grep_output = "       There was an error, check logs for details"
 
         # Return Vendor
@@ -964,15 +1006,15 @@ def scan_network ():
 
     # Header
     updateState("Scan: Network")
-    file_print('[', startTime, '] Scan Devices:' )       
+    mylog('verbose', ['[', startTime, '] Scan Devices:' ])       
 
     # # Query ScanCycle properties
     print_log ('Query ScanCycle confinguration')
     scanCycle_data = query_ScanCycle_Data (True)
     if scanCycle_data is None:
-        file_print('\n*************** ERROR ***************')
-        file_print('ScanCycle %s not found' % cycle )
-        file_print('    Exiting...\n')
+        mylog('none', ['\n*************** ERROR ***************'])
+        mylog('none', ['ScanCycle %s not found' % cycle ])
+        mylog('none', ['    Exiting...\n'])
         return False
 
     commitDB()
@@ -983,27 +1025,24 @@ def scan_network ():
     # arp-scan command
     arpscan_devices = []
     if ENABLE_ARPSCAN:    
-        file_print('    arp-scan start')    
+        mylog('verbose', ['    arp-scan start'])    
         arpscan_devices = execute_arpscan ()
         print_log ('arp-scan ends')
-    
-    # DEBUG - print number of rows updated    
-    # file_print('aspr-scan result:', len(arpscan_devices))
 
     # Pi-hole method    
     if PIHOLE_ACTIVE :       
-        file_print('    Pi-hole start')        
+        mylog('verbose', ['    Pi-hole start'])        
         copy_pihole_network() 
         commitDB() 
 
     # DHCP Leases method    
     if DHCP_ACTIVE :        
-        file_print('    DHCP Leases start')        
+        mylog('verbose', ['    DHCP Leases start'])        
         read_DHCP_leases () 
         commitDB()
 
     # Load current scan data
-    file_print('  Processing scan results')     
+    mylog('verbose', ['  Processing scan results'])     
     save_scanned_devices (arpscan_devices, cycle_interval)    
     
     # Print stats
@@ -1012,17 +1051,17 @@ def scan_network ():
     print_log ('Stats end')
 
     # Create Events
-    file_print('  Updating DB Info')
-    file_print('    Sessions Events (connect / discconnect)')
+    mylog('verbose', ['  Updating DB Info'])
+    mylog('verbose', ['    Sessions Events (connect / discconnect)'])
     insert_events()
 
     # Create New Devices
     # after create events -> avoid 'connection' event
-    file_print('    Creating new devices')
+    mylog('verbose', ['    Creating new devices'])
     create_new_devices ()
 
     # Update devices info
-    file_print('    Updating Devices Info')
+    mylog('verbose', ['    Updating Devices Info'])
     update_devices_data_from_scan ()
 
     # Resolve devices names
@@ -1030,27 +1069,30 @@ def scan_network ():
     update_devices_names()
 
     # Void false connection - disconnections
-    file_print('    Voiding false (ghost) disconnections')
+    mylog('verbose', ['    Voiding false (ghost) disconnections'])
     void_ghost_disconnections ()
   
     # Pair session events (Connection / Disconnection)
-    file_print('    Pairing session events (connection / disconnection) ')
+    mylog('verbose', ['    Pairing session events (connection / disconnection) '])
     pair_sessions_events()  
   
     # Sessions snapshot
-    file_print('    Creating sessions snapshot')
+    mylog('verbose', ['    Creating sessions snapshot'])
     create_sessions_snapshot ()
 
     # Sessions snapshot
-    file_print('    Inserting scan results into Online_History')
+    mylog('verbose', ['    Inserting scan results into Online_History'])
     insertOnlineHistory()
   
     # Skip repeated notifications
-    file_print('    Skipping repeated notifications')
+    mylog('verbose', ['    Skipping repeated notifications'])
     skip_repeated_notifications ()
   
     # Commit changes    
     commitDB()
+
+    # Run splugin scripts which are set to run every timne after a scan finished
+    run_plugin_scripts('always_after_scan')
 
     return reporting
 
@@ -1110,7 +1152,7 @@ def execute_arpscan_on_interface (interface):
         result = subprocess.check_output (arpscan_args, universal_newlines=True)
     except subprocess.CalledProcessError as e:
         # An error occured, handle it
-        file_print(e.output)
+        mylog('none', [e.output])
         result = ""
 
     return result
@@ -1160,8 +1202,7 @@ def read_DHCP_leases ():
                             DHCP_IP, DHCP_Name, DHCP_MAC2)
                         VALUES (?, ?, ?, ?, ?)
                      """, data)
-    # DEBUG
-        # file_print(sql.rowcount)
+
     return reporting
 
 #-------------------------------------------------------------------------------
@@ -1226,19 +1267,19 @@ def print_scan_stats ():
     sql.execute ("""SELECT COUNT(*) FROM CurrentScan
                     WHERE cur_ScanCycle = ? """,
                     (cycle,))
-    file_print('    Devices Detected.......: ', str (sql.fetchone()[0]) )
+    mylog('verbose', ['    Devices Detected.......: ', str (sql.fetchone()[0]) ])
 
     # Devices arp-scan
     sql.execute ("""SELECT COUNT(*) FROM CurrentScan
                     WHERE cur_ScanMethod='arp-scan' AND cur_ScanCycle = ? """,
                     (cycle,))
-    file_print('        arp-scan detected..: ', str (sql.fetchone()[0]) )
+    mylog('verbose', ['        arp-scan detected..: ', str (sql.fetchone()[0]) ])
 
     # Devices Pi-hole
     sql.execute ("""SELECT COUNT(*) FROM CurrentScan
                     WHERE cur_ScanMethod='PiHole' AND cur_ScanCycle = ? """,
                     (cycle,))
-    file_print('        Pi-hole detected...: +' + str (sql.fetchone()[0]) )
+    mylog('verbose', ['        Pi-hole detected...: +' + str (sql.fetchone()[0]) ])
 
     # New Devices
     sql.execute ("""SELECT COUNT(*) FROM CurrentScan
@@ -1246,7 +1287,7 @@ def print_scan_stats ():
                       AND NOT EXISTS (SELECT 1 FROM Devices
                                       WHERE dev_MAC = cur_MAC) """,
                     (cycle,))
-    file_print('        New Devices........: ' + str (sql.fetchone()[0]) )
+    mylog('verbose', ['        New Devices........: ' + str (sql.fetchone()[0]) ])
 
     # Devices in this ScanCycle
     sql.execute ("""SELECT COUNT(*) FROM Devices, CurrentScan
@@ -1254,7 +1295,7 @@ def print_scan_stats ():
                       AND dev_ScanCycle = ? """,
                     (cycle,))
     
-    file_print('    Devices in this cycle..: ' + str (sql.fetchone()[0]) )
+    mylog('verbose', ['    Devices in this cycle..: ' + str (sql.fetchone()[0]) ])
 
     # Down Alerts
     sql.execute ("""SELECT COUNT(*) FROM Devices
@@ -1264,7 +1305,7 @@ def print_scan_stats ():
                                       WHERE dev_MAC = cur_MAC
                                         AND dev_ScanCycle = cur_ScanCycle) """,
                     (cycle,))
-    file_print('        Down Alerts........: ' + str (sql.fetchone()[0]) )
+    mylog('verbose', ['        Down Alerts........: ' + str (sql.fetchone()[0]) ])
 
     # New Down Alerts
     sql.execute ("""SELECT COUNT(*) FROM Devices
@@ -1275,7 +1316,7 @@ def print_scan_stats ():
                                       WHERE dev_MAC = cur_MAC
                                         AND dev_ScanCycle = cur_ScanCycle) """,
                     (cycle,))
-    file_print('        New Down Alerts....: ' + str (sql.fetchone()[0]) )
+    mylog('verbose', ['        New Down Alerts....: ' + str (sql.fetchone()[0]) ])
 
     # New Connections
     sql.execute ("""SELECT COUNT(*) FROM Devices, CurrentScan
@@ -1283,7 +1324,7 @@ def print_scan_stats ():
                       AND dev_PresentLastScan = 0
                       AND dev_ScanCycle = ? """,
                     (cycle,))
-    file_print('        New Connections....: ' + str ( sql.fetchone()[0]) )
+    mylog('verbose', ['        New Connections....: ' + str ( sql.fetchone()[0]) ])
 
     # Disconnections
     sql.execute ("""SELECT COUNT(*) FROM Devices
@@ -1293,7 +1334,7 @@ def print_scan_stats ():
                                       WHERE dev_MAC = cur_MAC
                                         AND dev_ScanCycle = cur_ScanCycle) """,
                     (cycle,))
-    file_print('        Disconnections.....: ' + str ( sql.fetchone()[0]) )
+    mylog('verbose', ['        Disconnections.....: ' + str ( sql.fetchone()[0]) ])
 
     # IP Changes
     sql.execute ("""SELECT COUNT(*) FROM Devices, CurrentScan
@@ -1301,7 +1342,7 @@ def print_scan_stats ():
                       AND dev_ScanCycle = ?
                       AND dev_LastIP <> cur_IP """,
                     (cycle,))
-    file_print('        IP Changes.........: ' + str ( sql.fetchone()[0]) )
+    mylog('verbose', ['        IP Changes.........: ' + str ( sql.fetchone()[0]) ])
 
 #-------------------------------------------------------------------------------
 def insertOnlineHistory():
@@ -1568,8 +1609,6 @@ def update_devices_data_from_scan ():
         if vendor != -1 and vendor != -2 :
             recordsToUpdate.append ([vendor, device['dev_MAC']])
 
-    # DEBUG - print list of record to update
-        # file_print(recordsToUpdate)
     sql.executemany ("UPDATE Devices SET dev_Vendor = ? WHERE dev_MAC = ? ",
         recordsToUpdate )
 
@@ -1601,7 +1640,7 @@ def update_devices_names ():
         return
 
     # Devices without name
-    file_print('        Trying to resolve devices without name')
+    mylog('verbose', ['        Trying to resolve devices without name'])
 
     # get names from Pholus scan 
     sql.execute ('SELECT * FROM Pholus_Scan where "Record_Type"="Answer"')    
@@ -1609,7 +1648,7 @@ def update_devices_names ():
     commitDB()
 
     # Number of entries from previous Pholus scans
-    file_print("          Pholus entries from prev scans: ", len(pholusResults))
+    mylog('verbose', ["          Pholus entries from prev scans: ", len(pholusResults)])
 
     for device in unknownDevices:
         newName = -1
@@ -1636,8 +1675,8 @@ def update_devices_names ():
             recordsToUpdate.append ([newName, device['dev_MAC']])
 
     # Print log            
-    file_print("        Names Found (DiG/Pholus): ", len(recordsToUpdate), " (",foundDig,"/",foundPholus ,")" )                 
-    file_print("        Names Not Found         : ", len(recordsNotFound) )    
+    mylog('verbose', ["        Names Found (DiG/Pholus): ", len(recordsToUpdate), " (",foundDig,"/",foundPholus ,")" ])                 
+    mylog('verbose', ["        Names Not Found         : ", len(recordsNotFound) ])    
      
     # update not found devices with (name not found) 
     sql.executemany ("UPDATE Devices SET dev_Name = ? WHERE dev_MAC = ? ", recordsNotFound )
@@ -1645,8 +1684,6 @@ def update_devices_names ():
     sql.executemany ("UPDATE Devices SET dev_Name = ? WHERE dev_MAC = ? ", recordsToUpdate )
     commitDB()
 
-    # DEBUG - print number of rows updated
-    # file_print(sql.rowcount)
 
 #-------------------------------------------------------------------------------
 def performNmapScan(devicesToScan):
@@ -1663,9 +1700,9 @@ def performNmapScan(devicesToScan):
 
         updateState("Scan: Nmap")
 
-        file_print('[', timeNow(), '] Scan: Nmap for max ', str(timeoutSec), 's ('+ str(round(int(timeoutSec) / 60, 1)) +'min) per device')  
+        mylog('verbose', ['[', timeNow(), '] Scan: Nmap for max ', str(timeoutSec), 's ('+ str(round(int(timeoutSec) / 60, 1)) +'min) per device'])  
 
-        file_print("        Estimated max delay: ", (devTotal * int(timeoutSec)), 's ', '(', round((devTotal * int(timeoutSec))/60,1) , 'min)' )
+        mylog('verbose', ["        Estimated max delay: ", (devTotal * int(timeoutSec)), 's ', '(', round((devTotal * int(timeoutSec))/60,1) , 'min)' ])
 
         devIndex = 0
         for device in devicesToScan:
@@ -1681,15 +1718,15 @@ def performNmapScan(devicesToScan):
                 output = subprocess.check_output (nmapArgs, universal_newlines=True,  stderr=subprocess.STDOUT, timeout=(timeoutSec + 30))
             except subprocess.CalledProcessError as e:
                 # An error occured, handle it
-                file_print(e.output)
-                file_print("        Error - Nmap Scan - check logs", progress)            
+                mylog('none', [e.output])
+                mylog('none', ["        Error - Nmap Scan - check logs", progress])            
             except subprocess.TimeoutExpired as timeErr:
-                file_print('        Nmap TIMEOUT - the process forcefully terminated as timeout reached for ', device["dev_LastIP"], progress) 
+                mylog('verbose', ['        Nmap TIMEOUT - the process forcefully terminated as timeout reached for ', device["dev_LastIP"], progress]) 
 
             if output == "": # check if the subprocess failed                    
-                file_print('[', timeNow(), '] Scan: Nmap FAIL for ', device["dev_LastIP"], progress ,' check logs for details') 
+                mylog('info', ['[', timeNow(), '] Scan: Nmap FAIL for ', device["dev_LastIP"], progress ,' check logs for details']) 
             else: 
-                file_print('[', timeNow(), '] Scan: Nmap SUCCESS for ', device["dev_LastIP"], progress)
+                mylog('verbose', ['[', timeNow(), '] Scan: Nmap SUCCESS for ', device["dev_LastIP"], progress])
 
             devIndex += 1
             
@@ -1741,7 +1778,7 @@ def performNmapScan(devicesToScan):
                     if any(x.hash == newEntry.hash for x in oldEntries):
                         newEntries.pop(index)
 
-                file_print('[', timeNow(), '] Scan: Nmap found ', len(newEntries), ' new or changed ports')
+                mylog('verbose', ['[', timeNow(), '] Scan: Nmap found ', len(newEntries), ' new or changed ports'])
 
                 # collect new ports, find the corresponding old entry and return for notification purposes
                 # also update the DB with the new values after deleting the old ones
@@ -1828,7 +1865,7 @@ def performPholusScan (timeoutSec):
         temp = subnet.split("--interface=")
 
         if len(temp) != 2:
-            file_print("        Skip scan (need subnet in format '192.168.1.0/24 --inteface=eth0'), got: ", subnet)
+            mylog('none', ["        Skip scan (need subnet in format '192.168.1.0/24 --inteface=eth0'), got: ", subnet])
             return
 
         mask = temp[0].strip()
@@ -1836,8 +1873,8 @@ def performPholusScan (timeoutSec):
 
         # logging & updating app state        
         updateState("Scan: Pholus")        
-        file_print('[', timeNow(), '] Scan: Pholus for ', str(timeoutSec), 's ('+ str(round(int(timeoutSec) / 60, 1)) +'min)')  
-        file_print("        Pholus scan on [interface] ", interface, " [mask] " , mask)
+        mylog('info', ['[', timeNow(), '] Scan: Pholus for ', str(timeoutSec), 's ('+ str(round(int(timeoutSec) / 60, 1)) +'min)'])  
+        mylog('verbose', ["        Pholus scan on [interface] ", interface, " [mask] " , mask])
         
         # the scan always lasts 2x as long, so the desired user time from settings needs to be halved
         adjustedTimeout = str(round(int(timeoutSec) / 2, 0)) 
@@ -1853,15 +1890,15 @@ def performPholusScan (timeoutSec):
             output = subprocess.check_output (pholus_args, universal_newlines=True,  stderr=subprocess.STDOUT, timeout=(timeoutSec + 30))
         except subprocess.CalledProcessError as e:
             # An error occured, handle it
-            file_print(e.output)
-            file_print("        Error - Pholus Scan - check logs")            
+            mylog('none', [e.output])
+            mylog('none', ["        Error - Pholus Scan - check logs"])            
         except subprocess.TimeoutExpired as timeErr:
-            file_print('        Pholus TIMEOUT - the process forcefully terminated as timeout reached') 
+            mylog('none', ['        Pholus TIMEOUT - the process forcefully terminated as timeout reached']) 
 
         if output == "": # check if the subprocess failed                    
-            file_print('[', timeNow(), '] Scan: Pholus FAIL - check logs') 
+            mylog('none', ['[', timeNow(), '] Scan: Pholus FAIL - check logs']) 
         else: 
-            file_print('[', timeNow(), '] Scan: Pholus SUCCESS')
+            mylog('verbose', ['[', timeNow(), '] Scan: Pholus SUCCESS'])
         
         #  check the last run output
         f = open(logPath + '/pialert_pholus_lastrun.log', 'r+')
@@ -1991,7 +2028,7 @@ def resolve_device_name_dig (pMAC, pIP):
             newName = subprocess.check_output (dig_args, universal_newlines=True)
         except subprocess.CalledProcessError as e:
             # An error occured, handle it
-            file_print(e.output)            
+            mylog('none', [e.output])            
             # newName = "Error - check logs"
             return -1
 
@@ -2166,7 +2203,7 @@ def send_notifications ():
     deviceUrl              = REPORT_DASHBOARD_URL + '/deviceDetails.php?mac='
 
     # Reporting section
-    file_print('  Check if something to report')    
+    mylog('verbose', ['  Check if something to report'])    
 
     # prepare variables for JSON construction
     json_internet = []
@@ -2174,6 +2211,7 @@ def send_notifications ():
     json_down_devices = []
     json_events = []
     json_ports = []
+    json_plugins = []
 
     # Disable reporting on events for devices where reporting is disabled based on the MAC address
     sql.execute ("""UPDATE Events SET eve_PendingAlertEmail = 0
@@ -2283,12 +2321,29 @@ def send_notifications ():
 
         mail_text = mail_text.replace ('<PORTS_TABLE>', portsTxt )
 
+    if 'plugins' in INCLUDED_SECTIONS:  
+        # Compose Plugins Section   
+        sqlQuery = """SELECT Plugin, Object_PrimaryId, Object_SecondaryId, DateTimeChanged, Watched_Value1, Watched_Value2, Watched_Value3, Watched_Value4, Status from Plugins_Events"""
+
+        notiStruc = construct_notifications(sqlQuery, "Plugins")
+
+        # collect "plugins" for the webhook json 
+        json_plugins = notiStruc.json["data"]
+
+        mail_text = mail_text.replace ('<PLUGINS_TABLE>', notiStruc.text + '\n')
+        mail_html = mail_html.replace ('<PLUGINS_TABLE>', notiStruc.html)
+
+        # check if we need to report something
+        plugins_report = plugin_check_smth_to_report(json_plugins)
+
+
     json_final = {
                     "internet": json_internet,                        
                     "new_devices": json_new_devices,
                     "down_devices": json_down_devices,                        
                     "events": json_events,
                     "ports": json_ports,
+                    "plugins": json_plugins,
                     }    
 
     mail_text = removeDuplicateNewLines(mail_text)
@@ -2297,55 +2352,56 @@ def send_notifications ():
     mail_html = generate_mac_links (mail_html, deviceUrl)
 
     #  Write output emails for debug    
+    write_file (logPath + '/report_output.json', json.dumps(json_final)) 
     write_file (logPath + '/report_output.txt', mail_text) 
     write_file (logPath + '/report_output.html', mail_html) 
 
     # Send Mail
-    if json_internet != [] or json_new_devices != [] or json_down_devices != [] or json_events != [] or json_ports != [] or debug_force_notification:        
+    if json_internet != [] or json_new_devices != [] or json_down_devices != [] or json_events != [] or json_ports != [] or debug_force_notification or plugins_report:        
 
         update_api(True)
 
-        file_print('    Changes detected, sending reports')
+        mylog('none', ['    Changes detected, sending reports'])
 
         if REPORT_MAIL and check_config('email'):  
             updateState("Send: Email")
-            file_print('      Sending report by Email')
+            mylog('info', ['      Sending report by Email'])
             send_email (mail_text, mail_html)
         else :
-            file_print('      Skip email')
+            mylog('verbose', ['      Skip email'])
         if REPORT_APPRISE and check_config('apprise'):
             updateState("Send: Apprise")
-            file_print('      Sending report by Apprise')
+            mylog('info', ['      Sending report by Apprise'])
             send_apprise (mail_html, mail_text)
         else :
-            file_print('      Skip Apprise')
+            mylog('verbose', ['      Skip Apprise'])
         if REPORT_WEBHOOK and check_config('webhook'):
             updateState("Send: Webhook")
-            file_print('      Sending report by Webhook')
+            mylog('info', ['      Sending report by Webhook'])
             send_webhook (json_final, mail_text)
         else :
-            file_print('      Skip webhook')
+            mylog('verbose', ['      Skip webhook'])
         if REPORT_NTFY and check_config('ntfy'):
             updateState("Send: NTFY")
-            file_print('      Sending report by NTFY')
+            mylog('info', ['      Sending report by NTFY'])
             send_ntfy (mail_text)
         else :
-            file_print('      Skip NTFY')
+            mylog('verbose', ['      Skip NTFY'])
         if REPORT_PUSHSAFER and check_config('pushsafer'):
             updateState("Send: PUSHSAFER")
-            file_print('      Sending report by PUSHSAFER')
+            mylog('info', ['      Sending report by PUSHSAFER'])
             send_pushsafer (mail_text)
         else :
-            file_print('      Skip PUSHSAFER')
+            mylog('verbose', ['      Skip PUSHSAFER'])
         # Update MQTT entities
         if REPORT_MQTT and check_config('mqtt'):
             updateState("Send: MQTT")
-            file_print('      Establishing MQTT thread')                          
+            mylog('info', ['      Establishing MQTT thread'])                          
             mqtt_start()        
         else :
-            file_print('      Skip MQTT')
+            mylog('verbose', ['      Skip MQTT'])
     else :
-        file_print('    No changes to report')
+        mylog('verbose', ['    No changes to report'])
 
     # Clean Pending Alert Events
     sql.execute ("""UPDATE Devices SET dev_LastNotification = ?
@@ -2354,11 +2410,14 @@ def send_notifications ():
                  """, (datetime.datetime.now(),) )
     sql.execute ("""UPDATE Events SET eve_PendingAlertEmail = 0
                     WHERE eve_PendingAlertEmail = 1""")
+
+    # clear plugin events
+    sql.execute ("DELETE FROM Plugins_Events")
     
     changedPorts_json_struc = None
 
-    # DEBUG - print number of rows updated
-    file_print('    Notifications: ', sql.rowcount)
+    # DEBUG - print number of rows updated    
+    mylog('info', ['[', timeNow(), '] Notifications: ', sql.rowcount])
 
     # Commit changes    
     commitDB()
@@ -2381,22 +2440,22 @@ def construct_notifications(sqlQuery, tableTitle, skipText = False, suppliedJson
     else:
         json_struc = suppliedJsonStruct
 
-    json = json_struc.json
+    jsn  = json_struc.json
     html = ""    
     text = ""
 
-    if json["data"] != []:
+    if len(jsn["data"]) > 0:
         text = tableTitle + "\n---------\n"
 
-        html = convert(json, build_direction=build_direction, table_attributes=table_attributes)
-
+        html = convert(jsn, build_direction=build_direction, table_attributes=table_attributes)
         html = format_table(html, "data", headerProps, tableTitle).replace('<ul>','<ul style="list-style:none;padding-left:0">')
 
         headers = json_struc.columnNames
 
         # prepare text-only message
         if skipText == False:
-            for device in json["data"]:
+            
+            for device in jsn["data"]:
                 for header in headers:
                     padding = ""
                     if len(header) < 4:
@@ -2408,7 +2467,7 @@ def construct_notifications(sqlQuery, tableTitle, skipText = False, suppliedJson
         for header in headers:
             html = format_table(html, header, thProps)
 
-    return noti_struc(json, text, html)
+    return noti_struc(jsn, text, html)
 
 #-------------------------------------------------------------------------------
 class noti_struc:
@@ -2422,42 +2481,42 @@ def check_config(service):
 
     if service == 'email':
         if SMTP_PASS == '' or SMTP_SERVER == '' or SMTP_USER == '' or REPORT_FROM == '' or REPORT_TO == '':
-            file_print('    Error: Email service not set up correctly. Check your pialert.conf SMTP_*, REPORT_FROM and REPORT_TO variables.')
+            mylog('none', ['    Error: Email service not set up correctly. Check your pialert.conf SMTP_*, REPORT_FROM and REPORT_TO variables.'])
             return False
         else:
             return True   
 
     if service == 'apprise':
         if APPRISE_URL == '' or APPRISE_HOST == '':
-            file_print('    Error: Apprise service not set up correctly. Check your pialert.conf APPRISE_* variables.')
+            mylog('none', ['    Error: Apprise service not set up correctly. Check your pialert.conf APPRISE_* variables.'])
             return False
         else:
             return True  
 
     if service == 'webhook':
         if WEBHOOK_URL == '':
-            file_print('    Error: Webhook service not set up correctly. Check your pialert.conf WEBHOOK_* variables.')
+            mylog('none', ['    Error: Webhook service not set up correctly. Check your pialert.conf WEBHOOK_* variables.'])
             return False
         else:
             return True 
 
     if service == 'ntfy':
         if NTFY_HOST == '' or NTFY_TOPIC == '':
-            file_print('    Error: NTFY service not set up correctly. Check your pialert.conf NTFY_* variables.')
+            mylog('none', ['    Error: NTFY service not set up correctly. Check your pialert.conf NTFY_* variables.'])
             return False
         else:
             return True 
 
     if service == 'pushsafer':
         if PUSHSAFER_TOKEN == 'ApiKey':
-            file_print('    Error: Pushsafer service not set up correctly. Check your pialert.conf PUSHSAFER_TOKEN variable.')
+            mylog('none', ['    Error: Pushsafer service not set up correctly. Check your pialert.conf PUSHSAFER_TOKEN variable.'])
             return False
         else:
             return True 
 
     if service == 'mqtt':
         if MQTT_BROKER == '' or MQTT_PORT == '' or MQTT_USER == '' or MQTT_PASSWORD == '':
-            file_print('    Error: MQTT service not set up correctly. Check your pialert.conf MQTT_* variables.')
+            mylog('none', ['    Error: MQTT service not set up correctly. Check your pialert.conf MQTT_* variables.'])
             return False
         else:
             return True 
@@ -2523,8 +2582,9 @@ def remove_tag (pText, pTag):
 #-------------------------------------------------------------------------------
 def send_email (pText, pHTML):
 
-    # Print more info for debugging if PRINT_LOG enabled
-    print_log ('REPORT_TO: ' + hide_email(str(REPORT_TO)) + '  SMTP_USER: ' + hide_email(str(SMTP_USER))) 
+    # Print more info for debugging if LOG_LEVEL == 'debug' 
+    if LOG_LEVEL == 'debug':
+        print_log ('REPORT_TO: ' + hide_email(str(REPORT_TO)) + '  SMTP_USER: ' + hide_email(str(SMTP_USER))) 
 
     # Compose email
     msg = MIMEMultipart('alternative')
@@ -2562,8 +2622,8 @@ def send_email (pText, pHTML):
 
         failedAt = print_log('Setting SMTP debug level')
 
-        # Verbose debug of the communication between SMTP server and client
-        if PRINT_LOG:
+        # Log level set to debug of the communication between SMTP server and client
+        if LOG_LEVEL == 'debug':
             smtp_connection.set_debuglevel(1) 
         
         failedAt = print_log( 'Sending .ehlo()')
@@ -2582,11 +2642,11 @@ def send_email (pText, pHTML):
         smtp_connection.sendmail (REPORT_FROM, REPORT_TO, msg.as_string())
         smtp_connection.quit()
     except smtplib.SMTPAuthenticationError as e: 
-        file_print('      ERROR: Failed at - ', failedAt)
-        file_print('      ERROR: Couldn\'t connect to the SMTP server (SMTPAuthenticationError), skipping Email (enable PRINT_LOG for more logging)')
+        mylog('none', ['      ERROR: Failed at - ', failedAt])
+        mylog('none', ['      ERROR: Couldn\'t connect to the SMTP server (SMTPAuthenticationError), skipping Email (enable LOG_LEVEL=debug for more logging)'])
     except smtplib.SMTPServerDisconnected as e: 
-        file_print('      ERROR: Failed at - ', failedAt)
-        file_print('      ERROR: Couldn\'t connect to the SMTP server (SMTPServerDisconnected), skipping Email (enable PRINT_LOG for more logging)')
+        mylog('none', ['      ERROR: Failed at - ', failedAt])
+        mylog('none', ['      ERROR: Couldn\'t connect to the SMTP server (SMTPServerDisconnected), skipping Email (enable LOG_LEVEL=debug for more logging)'])
 
     print_log('      DEBUG: Last executed - ' + str(failedAt))
 
@@ -2671,7 +2731,7 @@ def send_webhook (_json, _html):
         logResult (stdout, stderr)    
     except subprocess.CalledProcessError as e:
         # An error occured, handle it
-        file_print(e.output)
+        mylog('none', [e.output])
 
 #-------------------------------------------------------------------------------
 def send_apprise (html, text):
@@ -2696,7 +2756,7 @@ def send_apprise (html, text):
         logResult (stdout, stderr)      
     except subprocess.CalledProcessError as e:
         # An error occured, handle it
-        file_print(e.output)    
+        mylog('none', [e.output])    
 
 #-------------------------------------------------------------------------------
 # MQTT
@@ -2717,7 +2777,7 @@ def publish_mqtt(client, topic, message):
         status = result[0]
 
         if status != 0:            
-            file_print("Waiting to reconnect to MQTT broker")
+            mylog('info', ["Waiting to reconnect to MQTT broker"])
             time.sleep(0.1) 
     return True
 
@@ -2806,10 +2866,10 @@ def mqtt_create_client():
         global mqtt_connected_to_broker
         
         if rc == 0: 
-            file_print("        Connected to broker")            
+            mylog('verbose', ["        Connected to broker"])            
             mqtt_connected_to_broker = True     # Signal connection 
         else: 
-            file_print("        Connection failed")
+            mylog('none', ["        Connection failed"])
             mqtt_connected_to_broker = False
 
 
@@ -2860,7 +2920,9 @@ def mqtt_start():
     # Get all devices
     devices = get_all_devices()
 
-    file_print("        Estimated delay: ", (len(devices) * int(MQTT_DELAY_SEC)), 's ', '(', round((len(devices) * int(MQTT_DELAY_SEC))/60,1) , 'min)' )
+    sec_delay = len(devices) * int(MQTT_DELAY_SEC)*5
+
+    mylog('info', ["        Estimated delay: ", (sec_delay), 's ', '(', round(sec_delay/60,1) , 'min)' ])
 
     for device in devices:        
 
@@ -2948,7 +3010,7 @@ def upgradeDB ():
       """).fetchone()[0] == 0
 
     if dev_Network_Node_MAC_ADDR_missing :
-      file_print("[upgradeDB] Adding dev_Network_Node_MAC_ADDR to the Devices table")   
+      mylog('verbose', ["[upgradeDB] Adding dev_Network_Node_MAC_ADDR to the Devices table"])   
       sql.execute("""      
       ALTER TABLE "Devices" ADD "dev_Network_Node_MAC_ADDR" TEXT      
       """)
@@ -2959,7 +3021,7 @@ def upgradeDB ():
       """).fetchone()[0] == 0
 
     if dev_Network_Node_port_missing :
-      file_print("[upgradeDB] Adding dev_Network_Node_port to the Devices table")     
+      mylog('verbose', ["[upgradeDB] Adding dev_Network_Node_port to the Devices table"])     
       sql.execute("""      
       ALTER TABLE "Devices" ADD "dev_Network_Node_port" INTEGER 
       """)
@@ -2970,7 +3032,7 @@ def upgradeDB ():
       """).fetchone()[0] == 0
 
     if dev_Icon_missing :
-      file_print("[upgradeDB] Adding dev_Icon to the Devices table")     
+      mylog('verbose', ["[upgradeDB] Adding dev_Icon to the Devices table"])     
       sql.execute("""      
       ALTER TABLE "Devices" ADD "dev_Icon" TEXT 
       """)
@@ -2982,7 +3044,7 @@ def upgradeDB ():
     """).fetchone() == None
 
     # Re-creating Settings table    
-    file_print("[upgradeDB] Re-creating Settings table")
+    mylog('verbose', ["[upgradeDB] Re-creating Settings table"])
 
     if settingsMissing == False:   
         sql.execute("DROP TABLE Settings;")       
@@ -3013,7 +3075,7 @@ def upgradeDB ():
     #     pholusScanMissing = True  
 
     if pholusScanMissing:
-        file_print("[upgradeDB] Re-creating Pholus_Scan table")
+        mylog('verbose', ["[upgradeDB] Re-creating Pholus_Scan table"])
         sql.execute("""      
         CREATE TABLE "Pholus_Scan" (        
         "Index"	          INTEGER,
@@ -3035,7 +3097,7 @@ def upgradeDB ():
     """).fetchone() == None
 
      # Re-creating Parameters table
-    file_print("[upgradeDB] Re-creating Parameters table")
+    mylog('verbose', ["[upgradeDB] Re-creating Parameters table"])
     sql.execute("DROP TABLE Parameters;")
 
     sql.execute("""      
@@ -3054,7 +3116,7 @@ def upgradeDB ():
     #     nmapScanMissing = True  
 
     if nmapScanMissing:
-        file_print("[upgradeDB] Re-creating Nmap_Scan table")
+        mylog('verbose', ["[upgradeDB] Re-creating Nmap_Scan table"])
         sql.execute("""      
         CREATE TABLE "Nmap_Scan" (        
         "Index"	          INTEGER,
@@ -3069,40 +3131,54 @@ def upgradeDB ():
         """)
 
     # Plugin state
-    sql_Plugins_State = """ CREATE TABLE IF NOT EXISTS Plugins_State(
+    sql_Plugins_Objects = """ CREATE TABLE IF NOT EXISTS Plugins_Objects(
                         "Index"	          INTEGER,
                         Plugin TEXT NOT NULL,
                         Object_PrimaryID TEXT NOT NULL,
                         Object_SecondaryID TEXT NOT NULL,
-                        DateTime TEXT NOT NULL,                        
+                        DateTimeCreated TEXT NOT NULL,                        
+                        DateTimeChanged TEXT NOT NULL,                        
                         Watched_Value1 TEXT NOT NULL,
                         Watched_Value2 TEXT NOT NULL,
                         Watched_Value3 TEXT NOT NULL,
                         Watched_Value4 TEXT NOT NULL,
+                        Status TEXT NOT NULL,  
                         Extra TEXT NOT NULL,
+                        UserData TEXT NOT NULL,
                         PRIMARY KEY("Index" AUTOINCREMENT)
                     ); """
-    sql.execute(sql_Plugins_State)
+    sql.execute(sql_Plugins_Objects)
 
     # Plugin execution results
-    sql_Plugin_Events = """ CREATE TABLE IF NOT EXISTS Plugins_Events(
+    sql_Plugins_Events = """ CREATE TABLE IF NOT EXISTS Plugins_Events(
                         "Index"	          INTEGER,
                         Plugin TEXT NOT NULL,
                         Object_PrimaryID TEXT NOT NULL,
                         Object_SecondaryID TEXT NOT NULL,
-                        DateTime TEXT NOT NULL,                        
+                        DateTimeCreated TEXT NOT NULL,                        
+                        DateTimeChanged TEXT NOT NULL,                         
                         Watched_Value1 TEXT NOT NULL,
                         Watched_Value2 TEXT NOT NULL,
                         Watched_Value3 TEXT NOT NULL,
                         Watched_Value4 TEXT NOT NULL,
-                        Processed TEXT NOT NULL,                        
+                        Status TEXT NOT NULL,              
+                        Extra TEXT NOT NULL,
+                        UserData TEXT NOT NULL,
                         PRIMARY KEY("Index" AUTOINCREMENT)
                     ); """
-    sql.execute(sql_Plugin_Events)
+    sql.execute(sql_Plugins_Events)
 
     # Dynamically generated language strings
-    sql.execute("DROP TABLE Language_Strings;") 
-    sql.execute(""" CREATE TABLE IF NOT EXISTS Language_Strings(
+    # indicates, if Language_Strings table is available 
+    languageStringsMissing = sql.execute("""
+    SELECT name FROM sqlite_master WHERE type='table'
+    AND name='Plugins_Language_Strings'; 
+    """).fetchone() == None
+    
+    if languageStringsMissing == False:
+        sql.execute("DROP TABLE Plugins_Language_Strings;") 
+
+    sql.execute(""" CREATE TABLE IF NOT EXISTS Plugins_Language_Strings(
                         "Index"	          INTEGER,
                         Language_Code TEXT NOT NULL,
                         String_Key TEXT NOT NULL,
@@ -3154,13 +3230,9 @@ def to_binary_sensor(input):
 #===============================================================================
 # API
 #===============================================================================
-def update_api(isNotification = False):
+def update_api(isNotification = False, updateOnlyDataSources = []):
 
-    #  Proceed only if enabled in settings
-    if ENABLE_API == False:
-        return
-
-    file_print('     [API] Updating files in /front/api')    
+    mylog('verbose', ['     [API] Updating files in /front/api'])    
     folder = pialertPath + '/front/api/'
 
     if isNotification:
@@ -3169,21 +3241,30 @@ def update_api(isNotification = False):
         write_file(folder + 'notification_text.html'  , mail_html)
         write_file(folder + 'notification_json_final.json'  , json.dumps(json_final))  
 
-    #  prepare databse tables we want to expose
+    # Save plugins
+    write_file(folder + 'plugins.json'  , json.dumps({"data" : plugins.list}))  
+
+    #  prepare databse tables we want to expose 
     dataSourcesSQLs = [
         ["devices", sql_devices_all],
         ["nmap_scan", sql_nmap_scan_all],
         ["pholus_scan", sql_pholus_scan_all],
         ["events_pending_alert", sql_events_pending_alert],
-        ["custom_endpoint", API_CUSTOM_SQL]
+        ["settings", sql_settings],
+        ["plugins_events", sql_plugins_events],
+        ["plugins_objects", sql_plugins_objects],
+        ["language_strings", sql_language_strings],
+        ["custom_endpoint", API_CUSTOM_SQL],
     ]
 
     # Save selected database tables
     for dsSQL in dataSourcesSQLs:
 
-        json_string = get_table_as_json(dsSQL[1]).json
+        if updateOnlyDataSources == [] or dsSQL[0] in updateOnlyDataSources:
 
-        write_file(folder + 'table_' + dsSQL[0] + '.json'  , json.dumps(json_string))     
+            json_string = get_table_as_json(dsSQL[1]).json
+
+            write_file(folder + 'table_' + dsSQL[0] + '.json'  , json.dumps(json_string))     
 
 #-------------------------------------------------------------------------------
 def get_table_as_json(sqlQuery):
@@ -3197,19 +3278,20 @@ def get_table_as_json(sqlQuery):
     result = {"data":[]}
 
     for row in rows: 
-        tmp = fill_row(columnNames, row)
-    
+        tmp = row_to_json(columnNames, row)
         result["data"].append(tmp)
     return json_struc(result, columnNames)
 
 #-------------------------------------------------------------------------------
 class json_struc:
-    def __init__(self, json, columnNames):
-        self.json = json
+    def __init__(self, jsn, columnNames):
+        # mylog('verbose', ['     [] tmp: ', str(json.dumps(jsn))]) 
+        self.json = jsn
         self.columnNames = columnNames       
 
 #-------------------------------------------------------------------------------
-def fill_row(names, row):  
+#  Creates a JSON object from a DB row
+def row_to_json(names, row):  
     
     rowEntry = {}
 
@@ -3380,6 +3462,25 @@ def get_all_devices():
     commitDB()
     return row
 
+#-------------------------------------------------------------------------------
+def get_sql_array(query):    
+
+    sql.execute(query)
+
+    rows = sql.fetchall()
+
+    commitDB()
+
+    #  convert result into list of lists
+    arr = []
+    for row in rows:
+        r_temp = []
+        for column in row:
+            r_temp.append(column)
+        arr.append(r_temp)
+
+    return arr
+
 
 #-------------------------------------------------------------------------------
 def removeDuplicateNewLines(text):
@@ -3425,17 +3526,17 @@ def check_and_run_event():
 def handle_run(runType):
     global last_network_scan
 
-    file_print('[', timeNow(), '] START Run: ', runType)  
+    mylog('info', ['[', timeNow(), '] START Run: ', runType])  
 
     if runType == 'ENABLE_ARPSCAN':
         last_network_scan = now_minus_24h        
 
-    file_print('[', timeNow(), '] END Run: ', runType)
+    mylog('info', ['[', timeNow(), '] END Run: ', runType])
 
 #-------------------------------------------------------------------------------
 def handle_test(testType):
 
-    file_print('[', timeNow(), '] START Test: ', testType)    
+    mylog('info', ['[', timeNow(), '] START Test: ', testType])    
 
     # Open text sample    
     sample_txt = get_file_content(pialertPath + '/back/report_sample.txt')
@@ -3457,8 +3558,39 @@ def handle_test(testType):
     if testType == 'REPORT_PUSHSAFER':
         send_pushsafer (sample_txt)
 
-    file_print('[', timeNow(), '] END Test: ', testType)
+    mylog('info', ['[', timeNow(), '] END Test: ', testType])
 
+
+#-------------------------------------------------------------------------------
+#  Return setting value
+def get_setting_value(key):
+    
+    set = get_setting(key)
+
+    if get_setting(key) is not None:
+
+        setVal = set[6] # setting value
+        setTyp = set[3] # setting type
+
+        return setVal
+
+    return ''
+
+#-------------------------------------------------------------------------------
+#  Return whole setting touple
+def get_setting(key):
+    result = None
+    # index order: key, name, desc, inputtype, options, regex, result, group, events
+    for set in mySettings:
+        if set[0] == key:
+            result = set
+    
+    if result is None:
+        mylog('info', [' Error - setting_missing - Setting not found for key: ', key])           
+        mylog('info', [' Error - logging the settings into file: ', logPath + '/setting_missing.json'])           
+        write_file (logPath + '/setting_missing.json', json.dumps({ 'data' : mySettings}))    
+
+    return result
 
 #-------------------------------------------------------------------------------
 def isNewVersion():   
@@ -3477,7 +3609,7 @@ def isNewVersion():
             text = url.text
             data = json.loads(text)
         except requests.exceptions.ConnectionError as e:
-            file_print("    Couldn't check for new release.") 
+            mylog('info', ["    Couldn't check for new release."]) 
             data = ""
         
         # make sure we received a valid response and not an API rate limit exceeded message
@@ -3488,7 +3620,7 @@ def isNewVersion():
             realeaseTimestamp = int(datetime.datetime.strptime(dateTimeStr, '%Y-%m-%dT%H:%M:%SZ').strftime('%s'))            
 
             if realeaseTimestamp > buildTimestamp + 600:        
-                file_print("    New version of the container available!")
+                mylog('none', ["    New version of the container available!"])
                 newVersionAvailable = True 
                 initOrSetParam('Back_New_Version_Available', str(newVersionAvailable))                
 
@@ -3508,10 +3640,10 @@ def get_plugins_configs():
             pluginsDict.append(json.loads(get_file_content(pluginsPath + "/" + d + '/config.json'), object_hook=custom_plugin_decoder))   
             pluginsList.append(json.loads(get_file_content(pluginsPath + "/" + d + '/config.json')))          
 
-    return plugins_struct(pluginsDict, pluginsList)
+    return plugins_class(pluginsDict, pluginsList)
 
 #-------------------------------------------------------------------------------
-class plugins_struct:
+class plugins_class:
     def __init__(self, dict, list):
         self.dict = dict
         self.list = list
@@ -3527,40 +3659,438 @@ def collect_lang_strings(json, pref):
 #-------------------------------------------------------------------------------
 def import_language_string(code, key, value, extra = ""):
 
-    sql.execute ("""INSERT INTO Language_Strings ("Language_Code", "String_Key", "String_Value", "Extra") VALUES (?, ?, ?, ?)""", (str(code), str(key), str(value), str(extra))) 
+    sql.execute ("""INSERT INTO Plugins_Language_Strings ("Language_Code", "String_Key", "String_Value", "Extra") VALUES (?, ?, ?, ?)""", (str(code), str(key), str(value), str(extra))) 
 
     commitDB ()
 
-#-------------------------------------------------------------------------------
-def get_setting_type(setting):
-
-    type = setting["type"]
-
-    if type in ['RUN']:
-        return 'selecttext'
-    if type in ['ENABLE', 'FORCE_REPORT']:
-        return 'boolean'
-    if type in ['TIMEOUT', 'RUN_TIMEOUT']:
-        return 'integer'
-    if type in ['NOTIFY_ON']:
-        return 'multiselect'
-
-    return 'text'
 
 #-------------------------------------------------------------------------------
 def custom_plugin_decoder(pluginDict):
     return namedtuple('X', pluginDict.keys())(*pluginDict.values())
 
 #-------------------------------------------------------------------------------
+def run_plugin_scripts(runType):
+    
+    global plugins, tz, mySchedules
+
+    # Header
+    updateState("Run: Plugins")
+
+    mylog('debug', ['     [Plugins] Check if any plugins need to be executed on run type: ', runType])
+
+    for plugin in plugins.list:
+
+        shouldRun = False
+
+        set = get_plugin_setting(plugin, "RUN")
+        if set != None and set['value'] == runType:
+            if runType != "schedule":
+                shouldRun = True
+            elif  runType == "schedule":
+                # run if overdue scheduled time   
+                prefix = plugin["unique_prefix"]
+
+                #  check scheduels if any contains a unique plugin prefix matching the current plugin
+                for schd in mySchedules:
+                    if schd.service == prefix:          
+                        # Check if schedule overdue
+                        shouldRun = schd.runScheduleCheck()  
+                        if shouldRun:
+                            # note the last time the scheduled plugin run was executed
+                            schd.last_run = datetime.datetime.now(tz).replace(microsecond=0)
+
+        if shouldRun:            
+                        
+            print_plugin_info(plugin, ['display_name'])
+            mylog('debug', ['     [Plugins] CMD: ', get_plugin_setting(plugin, "CMD")["value"]])
+            execute_plugin(plugin)
+
+#-------------------------------------------------------------------------------
+# Executes the plugin command specified in the setting with the function specified as CMD 
+def execute_plugin(plugin):
+
+    # ------- necessary settings check  --------
+    set = get_plugin_setting(plugin, "CMD")
+
+    #  handle missing "function":"CMD" setting
+    if set == None:                
+        return 
+
+    set_CMD = set["value"]
+
+    set = get_plugin_setting(plugin, "RUN_TIMEOUT")
+
+    #  handle missing "function":"<unique_prefix>_TIMEOUT" setting
+    if set == None:   
+        set_RUN_TIMEOUT = 10
+    else:     
+        set_RUN_TIMEOUT = set["value"] 
+
+    #  Prepare custom params
+    params = []
+
+    if "params" in plugin:
+        for param in plugin["params"]:            
+            resolved = ""
+
+            #  Get setting value
+            if param["type"] == "setting":
+                resolved = get_setting(param["value"])
+
+                if resolved != None:
+                    resolved = plugin_param_from_glob_set(resolved)
+
+            #  Get Sql result
+            if param["type"] == "sql":
+                resolved = flatten_array(get_sql_array(param["value"]))
+
+            if resolved == None:
+                mylog('none', ['     [Plugins] The parameter "name":"', param["name"], '" was resolved as None'])
+
+            else:
+                params.append( [param["name"], resolved] )
+    
+
+    # ------- prepare params --------
+    # prepare command from plugin settings, custom parameters  
+    command = resolve_wildcards(set_CMD, params).split()
+
+    # Execute command
+    mylog('verbose', ['     [Plugins] Executing: ', set_CMD])
+
+    try:
+        # try runnning a subprocess with a forced timeout in case the subprocess hangs
+        output = subprocess.check_output (command, universal_newlines=True,  stderr=subprocess.STDOUT, timeout=(set_RUN_TIMEOUT))
+    except subprocess.CalledProcessError as e:
+        # An error occured, handle it
+        mylog('none', [e.output])
+        mylog('none', ['        [Plugins] Error - enable LOG_LEVEL=debug and check logs'])            
+    except subprocess.TimeoutExpired as timeErr:
+        mylog('none', ['        [Plugins] TIMEOUT - the process forcefully terminated as timeout reached']) 
+
+
+    #  check the last run output
+    f = open(pluginsPath + '/' + plugin["code_name"] + '/last_result.log', 'r+')
+    newLines = f.read().split('\n')
+    f.close()        
+
+    # cleanup - select only lines containing a separator to filter out unnecessary data
+    newLines = list(filter(lambda x: '|' in x, newLines))  
+
+    if len(newLines) == 0: # check if the subprocess failed / there was no valid output
+        mylog('none', ['        [Plugins] No output received from the plugin - enable LOG_LEVEL=debug and check logs'])
+        return  
+    else: 
+        mylog('verbose', ['[', timeNow(), '] [Plugins]: SUCCESS, received ', len(newLines), ' entries'])      
+
+    # # regular logging
+    # for line in newLines:
+    #     append_line_to_file (pluginsPath + '/plugin.log', line +'\n')         
+    
+    # build SQL query parameters to insert into the DB
+    sqlParams = []
+
+    for line in newLines:
+        columns = line.split("|")
+        # There has to be always 8 columns
+        if len(columns) == 8:
+            sqlParams.append((plugin["unique_prefix"], columns[0], columns[1], 'null', columns[2], columns[3], columns[4], columns[5], columns[6], 0, columns[7], 'null'))
+        else:
+            mylog('none', ['        [Plugins]: Skipped invalid line in the output: ', line])
+
+    if len(sqlParams) > 0:                
+        sql.executemany ("""INSERT INTO Plugins_Events ("Plugin", "Object_PrimaryID", "Object_SecondaryID", "DateTimeCreated", "DateTimeChanged", "Watched_Value1", "Watched_Value2", "Watched_Value3", "Watched_Value4", "Status" ,"Extra", "UserData") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", sqlParams) 
+        commitDB ()
+
+        process_plugin_events(plugin)
+
+        # update API endpoints
+        update_api(False, ["plugins_events","plugins_objects"])
+
+
+#-------------------------------------------------------------------------------
+# Check if watched values changed for the given plugin
+def process_plugin_events(plugin):    
+
+    global pluginObjects, pluginEvents
+
+    pluginPref = plugin["unique_prefix"]
+
+    plugObjectsArr = get_sql_array ("SELECT * FROM Plugins_Objects where Plugin = '" + str(pluginPref)+"'") 
+    plugEventsArr  = get_sql_array ("SELECT * FROM Plugins_Events where Plugin = '" + str(pluginPref)+"'") 
+
+    pluginObjects = []
+    pluginEvents  = []
+
+    for obj in plugObjectsArr: 
+        pluginObjects.append(plugin_object_class(plugin, obj))
+
+    existingPluginObjectsCount = len(pluginObjects)
+
+    mylog('debug', ['     [Plugins] Existing objects: ', existingPluginObjectsCount])
+
+    # set status as new - will be changed later if conditions are fulfilled, e.g. entry found
+    for eve in plugEventsArr:
+        tmpObject = plugin_object_class(plugin, eve)        
+        tmpObject.status = "new"
+        pluginEvents.append(tmpObject)
+
+    
+    #  Update the status to "exists"
+    index = 0
+    for tmpObjFromEvent in pluginEvents:        
+
+        #  compare hash of the IDs for uniqueness
+        if any(x.idsHash == tmpObject.idsHash for x in pluginObjects):
+            mylog('debug', ['     [Plugins] Found existing object'])
+            pluginEvents[index].status = "exists"            
+
+            # plugEventsArr.pop(index) # remove processed entry
+
+        index += 1
+
+    # Loop thru events and update the one that exist to determine if watched columns changed
+    index = 0
+    for tmpObjFromEvent in pluginEvents:  
+
+        if tmpObjFromEvent.status == "exists": 
+
+            #  compare hash of the changed watched columns for uniqueness
+            if any(x.watchedHash != tmpObject.watchedHash for x in pluginObjects):
+                pluginEvents[index].status = "watched-changed"                            
+
+                # plugEventsArr.pop(index) # remove processed entry
+            else:
+                pluginEvents[index].status = "watched-not-changed"  
+
+        index += 1
+
+    # Merge existing plugin objects with newly discovered ones and update existin ones with new values
+    for eveObj in pluginEvents:
+        if eveObj.status == 'new':
+            pluginObjects.append(eveObj)
+        else:
+            index = 0
+            for plugObj in pluginObjects:
+                # find corresponding object for the event and merge
+                if plugObj.idsHash == eveObj.idsHash:
+                    pluginObjects[index] =  combine_plugin_objects(plugObj, eveObj)
+
+                index += 1
+
+    # Update the DB
+    # ----------------------------
+
+    # Update the Plugin_Objects    
+
+    for plugObj in pluginObjects: 
+
+        createdTime = plugObj.created
+
+        if plugObj.status == 'new':
+            createdTime = plugObj.changed        
+        
+        q = f"UPDATE Plugins_Objects set Plugin = '{plugObj.pluginPref}', DateTimeChanged = '{plugObj.changed}', Watched_Value1 = '{plugObj.watched1}', Watched_Value2 = '{plugObj.watched2}', Watched_Value3 = '{plugObj.watched3}', Watched_Value4 = '{plugObj.watched4}', Status = '{plugObj.status}', Extra = '{plugObj.extra}' WHERE 'Index' = {plugObj.index}"
+
+        sql.execute (q)
+
+    # Update the Plugins_Events with the new statuses    
+    
+    sql.execute ("DELETE FROM Plugins_Events")
+
+    for plugObj in pluginEvents: 
+
+        createdTime = plugObj.created
+
+        if plugObj.status == 'new':
+            createdTime = plugObj.changed        
+
+        sql.execute ("INSERT INTO Plugins_Events (Plugin, Object_PrimaryID, Object_SecondaryID, DateTimeCreated, DateTimeChanged, Watched_Value1, Watched_Value2, Watched_Value3, Watched_Value4, Status,  Extra, UserData) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (plugObj.pluginPref, plugObj.primaryId , plugObj.secondaryId , createdTime, plugObj.changed , plugObj.watched1 , plugObj.watched2 , plugObj.watched3 , plugObj.watched4 , plugObj.status , plugObj.extra, plugObj.userData ))    
+
+        commitDB()
+
+#-------------------------------------------------------------------------------
+class plugin_object_class:
+    def __init__(self, plugin, objDbRow):
+        self.index        = objDbRow[0]
+        self.pluginPref   = objDbRow[1]
+        self.primaryId    = objDbRow[2]
+        self.secondaryId  = objDbRow[3]
+        self.created      = objDbRow[4]
+        self.changed      = objDbRow[5]
+        self.watched1     = objDbRow[6]
+        self.watched2     = objDbRow[7]
+        self.watched3     = objDbRow[8]
+        self.watched4     = objDbRow[9]
+        self.status       = objDbRow[10]
+        self.extra        = objDbRow[11]
+        self.userData     = objDbRow[12]
+
+        self.idsHash      = str(hash(str(self.primaryId) + str(self.secondaryId)))    
+
+        self.watchedClmns = []
+        self.watchedIndxs = []          
+
+        setObj = get_plugin_setting(plugin, 'WATCH')
+
+        indexNameColumnMapping = [(6, 'Watched_Value1' ), (7, 'Watched_Value2' ), (8, 'Watched_Value3' ), (9, 'Watched_Value4' )]
+
+        if setObj is not None:            
+            
+            self.watchedClmns = setObj["value"]
+
+            for clmName in self.watchedClmns:
+                for mapping in indexNameColumnMapping:
+                    if clmName == indexNameColumnMapping[1]:
+                        self.watchedIndxs.append(indexNameColumnMapping[0])
+
+        tmp = ''
+        for indx in self.watchedIndxs:
+            tmp += str(objDbRow[indx])
+
+        self.watchedHash  = str(hash(tmp))
+
+
+#-------------------------------------------------------------------------------
+# Combine plugin objects, keep user-defined values, created time, changed time if nothing changed and the index
+def combine_plugin_objects(old, new):    
+    
+    new.userData = old.userData 
+    new.index = old.index 
+    new.created = old.created 
+
+    # Keep changed time if nothing changed
+    if new.status in ['watched-not-changed']:
+        new.changed = old.changed
+
+    #  return the new object, with some of the old values
+    return new
+
+#-------------------------------------------------------------------------------
+# Replace {wildcars} with parameters
+def resolve_wildcards(command, params):
+
+    mylog('debug', ['        [Plugins]: Pre-Resolved CMD: ', command])
+
+    for param in params:
+        mylog('debug', ['        [Plugins]: key     : {', param[0], '}'])
+        mylog('debug', ['        [Plugins]: resolved: ', param[1]])
+        command = command.replace('{' + param[0] + '}', param[1])
+
+    mylog('debug', ['        [Plugins]: Resolved CMD: ', command])
+
+    return command
+
+#-------------------------------------------------------------------------------
+# Check if there are events which need to be reported on based on settings
+def plugin_check_smth_to_report(notifs):
+    
+    for notJsn in notifs:
+        
+        pref = notJsn['Plugin'] #"Plugin" column 
+        stat = notJsn['Status'] #"Status" column 
+                 
+        val = get_setting_value(pref + '_REPORT_ON')
+
+        if set is not None:
+            
+            # report if there is at least one value in teh events to be reported on
+            # future improvement - selectively remove events based on this
+            if stat in val: 
+                return True
+
+    return False
+
+
+#-------------------------------------------------------------------------------
+# Flattens a setting to make it passable to a script
+def plugin_param_from_glob_set(globalSetting):
+
+    setVal = globalSetting[6] # setting value
+    setTyp = globalSetting[3] # setting type
+
+
+    noConversion = ['text', 'integer', 'boolean', 'password', 'readonly', 'selectinteger', 'selecttext' ]
+    arrayConversion = ['multiselect', 'list'] 
+
+    if setTyp in noConversion:
+        return setVal
+
+    if setTyp in arrayConversion:
+        return flatten_array(setVal)
+
+
+#-------------------------------------------------------------------------------
+# Gets the whole setting object
+def get_plugin_setting(plugin, function_key):
+    
+    result = None
+
+    for set in plugin['settings']:
+        if set["function"] == function_key:
+          result =  set 
+
+    if result == None:
+        mylog('none', ['     [Plugins] Setting with "function":"', function_key, '" is missing in plugin: ', get_plugin_string(plugin, 'display_name')])
+
+    return result
+
+
+#-------------------------------------------------------------------------------
+# Get localized string value on the top JSON depth, not recursive
+def get_plugin_string(props, el):
+
+    result = ''
+
+    if el in props['localized']:
+        for str in props[el]:
+            if str['language_code'] == 'en_us':
+                result = str['string']
+        
+        if result == '':
+            result = 'en_us string missing'
+
+    else:
+        result = props[el]
+    
+    return result
+
+#-------------------------------------------------------------------------------
+def print_plugin_info(plugin, elements = ['display_name']):
+
+    mylog('verbose', ['     [Plugins] ---------------------------------------------']) 
+
+    for el in elements:
+        res = get_plugin_string(plugin, el)
+        mylog('verbose', ['     [Plugins] ', el ,': ', res]) 
+
+#-------------------------------------------------------------------------------
+def flatten_array(arr):
+    
+    tmp = ''
+
+    for arrayItem in arr:        
+        # only one column flattening is supported
+        if isinstance(arrayItem, list):            
+            arrayItem = str(arrayItem[0])
+
+        tmp += arrayItem + ','
+        tmp = tmp.replace("'","").replace(' ','') # No single quotes or empty spaces allowed
+
+    return tmp[:-1] # Remove last comma ','
+
+    
+
+#-------------------------------------------------------------------------------
 # Cron-like Scheduling
 #-------------------------------------------------------------------------------
-class serviceSchedule:
+class schedule_class:
     def __init__(self, service, scheduleObject, last_next_schedule, was_last_schedule_used, last_run = 0):
         self.service = service
         self.scheduleObject = scheduleObject
         self.last_next_schedule = last_next_schedule
         self.last_run = last_run
-        self.was_last_schedule_used = was_last_schedule_used  
+        self.was_last_schedule_used = was_last_schedule_used          
     def runScheduleCheck(self):
 
         result = False 

@@ -35,7 +35,6 @@ elseif ($FUNCTION  == 'cleanLog')
   cleanLog($SETTINGS);
 }
 
-
 //------------------------------------------------------------------------------
 // Formatting data functions
 //------------------------------------------------------------------------------
@@ -275,28 +274,35 @@ function saveSettings()
     {
       if($group == $setting[0])
       {            
-        if($setting[3] == 'text' or $setting[3] == 'password' or $setting[3] == 'readonly' or $setting[3] == 'selecttext')
+        if($setting[2] == 'text' or $setting[2] == 'password' or $setting[2] == 'readonly' or $setting[2] == 'selecttext')
         {
-          $txt = $txt.$setting[1]."='".$setting[2]."'\n" ; 
-        } elseif($setting[3] == 'integer' or $setting[3] == 'selectinteger')
+          $val = encode_single_quotes($setting[3]);
+          $txt = $txt.$setting[1]."='".$val."'\n" ; 
+        } elseif($setting[2] == 'integer' or $setting[2] == 'selectinteger')
         {
-          $txt = $txt.$setting[1]."=".$setting[2]."\n" ; 
-        } elseif($setting[3] == 'boolean')
+          $txt = $txt.$setting[1]."=".$setting[3]."\n" ; 
+        } elseif($setting[2] == 'boolean')
         {
           $val = "False";
-          if($setting[2] == 'true')
+          if($setting[3] == 'true')
           {
             $val = "True";
           }
           $txt = $txt.$setting[1]."=".$val."\n" ; 
-        }elseif($setting[3] == 'multiselect' or $setting[3] == 'subnets')
+        }elseif($setting[2] == 'multiselect' or $setting[2] == 'subnets' or $setting[2] == 'list')
         {
-          $temp = '[';
-          foreach($setting[2] as $val)
-          {
-            $temp = $temp."'". $val."',";
+          $temp = '[';         
+          
+          if (count($setting) > 3 && is_array( $setting[3]) == True){
+            foreach($setting[3] as $val)
+            {
+              $temp = $temp."'". encode_single_quotes($val)."',";
+            }
+
+            $temp = substr_replace($temp, "", -1); // remove last comma ','
           }
-          $temp = substr_replace($temp, "", -1).']';  // close brackets and remove last comma ','
+
+          $temp = $temp.']';  // close brackets 
           $txt = $txt.$setting[1]."=".$temp."\n" ; 
         }            
       }
@@ -322,8 +328,6 @@ function saveSettings()
 }
 
 // -------------------------------------------------------------------------------------------
-
-
 function getString ($codeName, $default) {
 
   $result = lang($codeName);
@@ -334,6 +338,16 @@ function getString ($codeName, $default) {
   }   
 
   return $default;
+}
+
+// -------------------------------------------------------------------------------------------
+
+
+function encode_single_quotes ($val) {
+
+  $result = str_replace ('\'','{s-quote}',$val);
+
+  return $result;
 }
 
 // -------------------------------------------------------------------------------------------
@@ -403,7 +417,8 @@ function getDevicesColumns(){
               "dev_Location",
               "dev_Archived",
               "dev_Network_Node_port",
-              "dev_Network_Node_MAC_ADDR"]; 
+              "dev_Network_Node_MAC_ADDR",
+              "dev_Icon"]; 
               
   return $columns;
 }
@@ -427,5 +442,3 @@ function setCache($key, $value, $expireMinutes = 5) {
 
 
 ?>
-
-

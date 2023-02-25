@@ -14,11 +14,24 @@ $confPath = "../config/pialert.conf";
 
 checkPermissions([$dbPath, $confPath]);
 
+// get settings from the API json file
+
+// path to your JSON file
+$file = '../front/api/table_settings.json'; 
+// put the content of the file in a variable
+$data = file_get_contents($file); 
+// JSON decode
+$settingsJson = json_decode($data); 
+
+// get settings from the DB
+
 global $db;
+global $settingKeyOfLists;
 
 $result = $db->query("SELECT * FROM Settings");  
 
 // array 
+$settingKeyOfLists = array();
 $settings = array();
 while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {   
   // Push row data      
@@ -108,7 +121,7 @@ while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {
             // text - textbox
             if($set['Type'] == 'text' ) 
             {
-              $input = '<input class="form-control" onChange="settingsChanged()" input" id="'.$set['Code_Name'].'" value="'.$set['Value'].'"/>';                
+              $input = '<input class="form-control" onChange="settingsChanged()" id="'.$set['Code_Name'].'" value="'.$set['Value'].'"/>';                
             } 
             // password - hidden text
             elseif ($set['Type'] == 'password')
@@ -222,6 +235,37 @@ while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {
               $input = $input.'<div><button class="btn btn-primary" onclick="removeInterfaces()">Remove all</button></div>';
               
             }               
+            //  list
+            elseif ($set['Type'] == 'list')
+            {
+
+              $settingKeyOfLists[] = $set['Code_Name'];
+
+              $input = $input.
+              '<div class="row form-group">
+                <div class="col-xs-9">
+                  <input class="form-control" type="text" id="'.$set['Code_Name'].'_input" placeholder="Enter value"/>
+                </div>';
+              // Add interface button
+              $input = $input.
+                '<div class="col-xs-3"><button class="btn btn-primary" onclick="addList'.$set['Code_Name'].'()" >Add</button></div>
+                </div>';
+              
+              // list all interfaces as options
+              $input = $input.'<div class="form-group">
+                <select class="form-control" name="'.$set['Code_Name'].'" id="'.$set['Code_Name'].'" multiple readonly>';
+                
+              $options = createArray($set['Value']);                
+
+              foreach ($options as $option) {                                       
+
+                $input = $input.'<option value="'.$option.'" disabled>'.$option.'</option>';
+              }                
+              $input = $input.'</select></div>';
+              // Remove all interfaces button               
+              $input = $input.'<div><button class="btn btn-primary" onclick="removeFromList'.$set['Code_Name'].'()">Remove last</button></div>';
+              
+            }               
 
             $html = $html.$input;
 
@@ -280,7 +324,10 @@ while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {
 <script>
 
   // number of settings has to be equal to
-  var settingsNumber = 68;
+
+  // display the name of the first person
+  // echo $settingsJson[0]->name;
+  var settingsNumber = <?php echo count($settingsJson->data)?>;
 
   // Wrong number of settings processing
   if(<?php echo count($settings)?> != settingsNumber) 
@@ -288,7 +335,34 @@ while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {
     showModalOk('WARNING', "<?= lang("settings_missing")?>");    
   }
 
+  <?php
+    // generate javascript methods to handle add and remove items to lists
+    foreach($settingKeyOfLists as $settingKey )
+    {
+      $addList = 'function addList'.$settingKey.'()
+      {
+        input = $("#'.$settingKey.'_input").val();
+        $("#'.$settingKey.'").append($("<option disabled></option>").attr("value", input).text(input));
 
+        
+        $("#'.$settingKey.'_input").val("");
+  
+        settingsChanged();
+      }
+      ';      
+
+
+      $remList = 'function removeFromList'.$settingKey.'()
+      {
+        settingsChanged();
+        // $("#'.$settingKey.'").empty();
+        $("#'.$settingKey.'").find("option:last").remove();
+      }';
+
+      echo $remList;
+      echo $addList;
+    }
+  ?>
   
   // ---------------------------------------------------------
   function addInterface()
@@ -328,17 +402,18 @@ while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {
     // generate javascript to collect values    
     <?php 
 
-    $noConversion = array('text', 'integer', 'password', 'readonly', 'selecttext', 'selectinteger', "multiselect"); 
+    $noConversion = array('text', 'integer', 'password', 'readonly', 'selecttext', 'selectinteger', 'multiselect'); 
 
     foreach ($settings as $set) { 
       if(in_array($set['Type'] , $noConversion))
       {         
-        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", $("#'.$set["Code_Name"].'").val(), "'.$set["Type"].'" ]);';      
+        
+        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", "'.$set["Type"].'", $("#'.$set["Code_Name"].'").val() ]);';
       } 
       elseif ($set['Type'] == "boolean")
       {
         echo 'temp = $("#'.$set["Code_Name"].'").is(":checked") ;';
-        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", temp, "'.$set["Type"].'" ]);';  
+        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", "'.$set["Type"].'", temp ]);';  
       }
       elseif ($set["Code_Name"] == "SCAN_SUBNETS")
       {        
@@ -349,7 +424,23 @@ while ($row = $result -> fetchArray (SQLITE3_ASSOC)) {
         });       
         
         ";
-        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", temps, "'.$set["Type"].'" ]);';
+        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", "'.$set["Type"].'", temps ]);';
+      }
+      elseif ($set['Type'] == "list")
+      { 
+        echo 'console.log($("#'.$set["Code_Name"].'"));';       
+        echo "var temps = [];
+        
+        $( '#".$set["Code_Name"]." option' ).each( function( i, selected ) {
+          vl = $( selected ).val()
+          if (vl != '')
+          {
+            temps.push(vl);
+          }
+        });       
+        console.log(temps);
+        ";
+        echo 'settingsArray.push(["'.$set["Group"].'", "'.$set["Code_Name"].'", "'.$set["Type"].'", temps ]);';
       }
     }
     

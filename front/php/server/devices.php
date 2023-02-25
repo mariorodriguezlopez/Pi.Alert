@@ -11,10 +11,11 @@
   // External files
   require dirname(__FILE__).'/init.php';
 
-//------------------------------------------------------------------------------
-//  Action selector
-//------------------------------------------------------------------------------
+  //------------------------------------------------------------------------------
+  //  Action selector
+  //------------------------------------------------------------------------------
   // Set maximum execution time to 15 seconds
+
   ini_set ('max_execution_time','30');
 
   // Action functions
@@ -478,34 +479,41 @@ function ImportCSV() {
 
     // sql
     $sql = 'DELETE FROM Devices';
+
     // execute sql
     $result = $db->query($sql);    
 
-    // Open the CSV file with read-only mode
-    $csvFile = fopen($file, 'r');
-
-    // Skip the first line
-    fgetcsv($csvFile);
+    $data = file_get_contents($file); 
+    $data = explode("\n", $data); 
 
     $columns = getDevicesColumns();
 
-    // Parse data from CSV file line by line (max 10000 lines)
-    while (($row = fgetcsv($csvFile, 10000, ",")) !== FALSE)
+    
+    // Parse data from CSV file line by line (max 10000 lines)    
+    foreach($data as $row)
     {
-      $sql = 'INSERT INTO Devices ('.implode(',', $columns).') VALUES ("' .implode('","', $row).'")';
+      // Check if not empty and skipping first line      
+      $rowArray = explode(',',$row);
 
-      $result = $db->query($sql);
-
-      // check result
-      if ($result != TRUE) {
-        $error = $db->lastErrorMsg();
-        // break the while loop on error
-        break;
-      } 
+      if(count($rowArray) > 20)
+      {
+        $cleanMac = str_replace("\"","",$rowArray[0]);
+        
+        if(filter_var($cleanMac , FILTER_VALIDATE_MAC) == True || $cleanMac == "Internet")
+        {
+          $sql = "INSERT INTO Devices (".implode(',', $columns).") VALUES (" . $row.")";         
+          $result = $db->query($sql);
+          
+          // check result
+          if ($result != TRUE) {
+            $error = $db->lastErrorMsg();
+            // break the while loop on error
+            break;
+          } 
+        }
+      }
+      
     }
-
-    // Close opened CSV file
-    fclose($csvFile);
    
     if($error == "")
     {
@@ -515,7 +523,7 @@ function ImportCSV() {
     }
     else{
       // an error occurred while writing to the DB, display the last error message 
-      echo lang('BackDevices_DBTools_ImportCSVError')."\n\n$sql \n\n".$error;
+      echo lang('BackDevices_DBTools_ImportCSVError')."\n\n$sql \n\n".$result;
     }
     
    } else {
@@ -1184,7 +1192,7 @@ function overwriteIconType()
     if ($result == TRUE) {
       echo 'OK';
     } else {
-      echo 'KO';
+      echo lang('BackDevices_Device_UpdDevError');
     }
   }
 

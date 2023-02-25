@@ -24,6 +24,7 @@ $lang['en_us'] = array(
 'Gen_AreYouSure' => 'Are you sure?',
 'Gen_Upd' => 'Updated successfully',
 'Gen_Upd_Fail' => 'Update failed',
+'Gen_Help' => 'Need help?',
 
 //////////////////////////////////////////////////////////////////
 // Login Page - Update by @TeroRERO 03ago2022
@@ -50,9 +51,10 @@ $lang['en_us'] = array(
 'Navigation_Devices' => 'Devices',
 'Navigation_Presence' => 'Presence',
 'Navigation_Events' => 'Events',
+'Navigation_Network' => 'Network',
+'Navigation_Plugins' => 'Plugins',
 'Navigation_Maintenance' => 'Maintenance',
 'Navigation_Settings' => 'Settings',
-'Navigation_Network' => 'Network',
 'Navigation_HelpFAQ' => 'Help / FAQ',
 'Device_Title' => 'Devices',
 'Device_Shortcut_AllDevices' => 'All Devices',
@@ -347,6 +349,7 @@ $lang['en_us'] = array(
 'BackDevices_DBTools_ImportCSV' => 'The devices from the CSV file were imported successfully.',
 'BackDevices_DBTools_ImportCSVError' => 'The CSV file couldn\'t be imported. Make sure the format is correct.',
 'BackDevices_DBTools_ImportCSVMissing' => 'The CSV file couldn\'t be found under <b>/config/devices.csv.</b>',
+'BackDevices_Device_UpdDevError' => 'Error updating devices, try later. The database is probable locked due to an ongoing task.',
 
 
 //////////////////////////////////////////////////////////////////
@@ -470,6 +473,13 @@ $lang['en_us'] = array(
 
 
 //////////////////////////////////////////////////////////////////
+// Plugins
+//////////////////////////////////////////////////////////////////
+
+'Plugins_Unprocessed_Events' => 'Unprocessed Events',
+'Plugins_Objects' => 'Plugin Objects',
+
+//////////////////////////////////////////////////////////////////
 // Settings
 //////////////////////////////////////////////////////////////////
 
@@ -488,18 +498,10 @@ $lang['en_us'] = array(
 'ENABLE_ARPSCAN_description' => 'Arp-scan is a command-line tool that uses the ARP protocol to discover and fingerprint IP hosts on the local network. An alternative to ARP scan is to enable the <a onclick="toggleAllSettings()" href="#PIHOLE_ACTIVE"><code>PIHOLE_ACTIVE</code>PiHole integration settings</a>.',
 'SCAN_SUBNETS_name' => 'Subnets to scan',
 'SCAN_SUBNETS_description' => '
-The arp-scan time itself depends on the number of IP addresses to check. 
-The number of IPs to check depends on the <a target="_blank" href="https://www.calculator.net/ip-subnet-calculator.html">network mask</a> you set here. 
-For example, a <code>/24</code> mask results in 256 IPs to check, where as a <code>/16</code> 
-mask checks around 65,536. Every IP takes a couple seconds. This means that with an incorrect configuration 
-the arp-scan will take hours to complete instead of seconds.
-<ol>
-<li>Specify the network mask. For example, the filter <code>192.168.1.0/24</code> covers IP ranges 192.168.1.0 to 192.168.1.255.</li>
-<li>Run <code>iwconfig</code> in your container to find your interface name(s) (e.g.: <code>eth0</code>, <code>eth1</code>)</li>
-</ol>
+The arp-scan time itself depends on the number of IP addresses to check so set this up carefully with the appropriate network mask and interface. Check the <a href="https://github.com/jokob-sk/Pi.Alert/blob/main/docs/SUBNETS.md" target="_blank">subnets documentation</a> for details.
 ',
-'PRINT_LOG_name' => 'Print additional logging',
-'PRINT_LOG_description' => 'This setting will enable more verbose logging. Useful for debugging events writing into the database.',
+'LOG_LEVEL_name' => 'Print additional logging',
+'LOG_LEVEL_description' => 'This setting will enable more verbose logging. Useful for debugging events writing into the database.',
 'TIMEZONE_name' => 'Time zone',
 'TIMEZONE_description' => 'Time zone to display stats correctly. Find your time zone <a target="_blank" href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" rel="nofollow">here</a>.',
 'PIALERT_WEB_PROTECTION_name' => 'Enable login',
@@ -509,7 +511,7 @@ the arp-scan will take hours to complete instead of seconds.
 'INCLUDED_SECTIONS_name' => 'Notify on',
 'INCLUDED_SECTIONS_description' => 'Specifies which events trigger notifications. Remove the event type(s) you don\'t want to get notified on. This setting overrides device-specific settings in the UI. (<code>CTRL + Click</code> to select / deselect).',
 'SCAN_CYCLE_MINUTES_name' => 'Scan cycle delay',
-'SCAN_CYCLE_MINUTES_description' => 'The delay between scans. If using arp-scan, the scan time itself depends on the number of IP addresses to check. This is influenced by the network mask set in the <a href="#SCAN_SUBNETS"><code>SCAN_SUBNETS</code> setting</a> at the top. Every IP takes a couple seconds to scan.',
+'SCAN_CYCLE_MINUTES_description' => 'The delay between scans in minutes. If using arp-scan, the scan time itself depends on the number of IP addresses to check. This is influenced by the network mask set in the <a href="#SCAN_SUBNETS"><code>SCAN_SUBNETS</code> setting</a> at the top. Every IP takes a couple seconds to scan.',
 'DAYS_TO_KEEP_EVENTS_name' => 'Delete events older than',
 'DAYS_TO_KEEP_EVENTS_description' => 'This is a maintenance setting. This specifies the number of days worth of event entries that will be kept. All older events will be deleted periodically.',
 'REPORT_DASHBOARD_URL_name' => 'Pi.Alert URL',
@@ -676,6 +678,8 @@ the arp-scan will take hours to complete instead of seconds.
 'API_RUN_INTERVAL_description' => 'Depends on the <code>API_RUN</code> settings to be set to <code>interval</code>. The minimum cycle is <code>5</code> seconds.',
 'API_CUSTOM_SQL_name' => 'Custom endpoint',
 'API_CUSTOM_SQL_description' => 'You can specify a custom SQL query which will generate a JSON file and then expose it via the <a href="/api/table_custom_endpoint.json" target="_blank"><code>table_custom_endpoint.json</code> file endpoint</a>.',
+
+
 
 
 
